@@ -1,6 +1,6 @@
 [package]
 name = "nexo"
-version = "0.1.1"
+version = "0.2.0"
 description = "Nexo — terminal SSH/RDP rápido e multiplataforma"
 edition = "2021"
 
