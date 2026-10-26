@@ -7,7 +7,20 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["svelte"]
+    "types": [
+      "svelte"
+    ],
+    "paths": {
+      "$lib": [
+        "./src/lib"
+      ],
+      "$lib/*": [
+        "./src/lib/*"
+      ]
+    }
   },
-  "include": ["src/**/*.ts", "src/**/*.svelte"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.svelte"
+  ]
 }

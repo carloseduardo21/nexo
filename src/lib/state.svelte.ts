@@ -2,6 +2,9 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   asFailure,
   type ConnectOptions,
+  type Credential,
+  type CredentialView,
+  type SecretUpdate,
   backend,
   type ConnectFailure,
   type Host,
@@ -12,6 +15,7 @@ import {
   type TunnelStatus,
 } from './backend';
 import { leaves, removeLeaf, splitLeaf, type PaneNode, type SplitDir, type SplitNode } from './layout';
+import { loadSettings, settings } from './settings.svelte';
 import { toggleSftp } from './sftp.svelte';
 import { RdpPane } from './rdp';
 import { TermPane, type PaneSpec } from './term';
@@ -47,11 +51,21 @@ export type Dialog =
   | { type: 'prompt'; title: string; label: string; value: string; confirm: string }
   | { type: 'confirm'; title: string; message: string; confirm: string; danger?: boolean }
   | { type: 'tunnelForm'; tunnel: Tunnel | null; hostId?: string }
-  | { type: 'sshImport' };
+  | { type: 'sshImport' }
+  | { type: 'credentialForm'; credential: CredentialView | null }
+  | { type: 'generateKey' }
+  | { type: 'publicKey'; label: string; publicKey: string }
+  /** Busca rápida (Ctrl+K): conectar a um host, abrir terminal, ir para uma página. */
+  | { type: 'palette' };
+
+/** Página principal: as de gerenciamento, ou as sessões abertas (abas). */
+export type View = 'hosts' | 'credentials' | 'tunnels' | 'settings' | 'session';
 
 export const app = $state({
+  view: 'hosts' as View,
   profiles: [] as ShellProfile[],
   hosts: [] as HostView[],
+  credentials: [] as CredentialView[],
   tabs: [] as Tab[],
   activeTab: '',
   meta: {} as Record<string, PaneMeta>,
@@ -102,13 +116,15 @@ export async function init() {
     if (status) app.tunnelStatus[id] = status;
     else delete app.tunnelStatus[id];
   });
-  [app.profiles, app.hosts, app.tunnels, app.tunnelStatus] = await Promise.all([
+  [app.profiles, app.hosts, app.credentials, app.tunnels, app.tunnelStatus] = await Promise.all([
     backend.listShells(),
     backend.listHosts(),
+    backend.listCredentials(),
     backend.listTunnels(),
     backend.tunnelStatuses(),
+    loadSettings(),
   ]);
-  if (app.tabs.length === 0 && app.profiles.length > 0) newTab();
+  if (settings.startWithTerminal && app.tabs.length === 0 && app.profiles.length > 0) newTab();
   for (const tunnel of app.tunnels) if (tunnel.autoStart && !app.tunnelStatus[tunnel.id]) void startTunnel(tunnel.id);
 }
 
@@ -199,7 +215,19 @@ export function newTab(spec: PaneSpec | undefined = app.profiles[0] && localSpec
   const tabId = uid('t');
   const paneId = createPane(spec, tabId);
   app.tabs.push({ id: tabId, root: { type: 'leaf', id: paneId }, focused: paneId, broadcast: false });
+  showTab(tabId);
+}
+
+/** Mostra uma aba de sessão (sai das páginas de gerenciamento). */
+export function showTab(tabId: string) {
   app.activeTab = tabId;
+  app.view = 'session';
+}
+
+/** Vai para uma página de gerenciamento (hosts, credenciais…); as sessões continuam abertas. */
+export function showView(view: View) {
+  app.view = view;
+  if (view === 'session' && !app.activeTab && app.tabs[0]) app.activeTab = app.tabs[0].id;
 }
 
 export function split(dir: SplitDir) {
@@ -231,6 +259,7 @@ export function closeTab(tabId: string) {
   const [tab] = app.tabs.splice(index, 1);
   if (app.activeTab === tabId) app.activeTab = app.tabs[Math.min(index, app.tabs.length - 1)]?.id ?? '';
   for (const id of leaves(tab.root)) disposePane(id);
+  if (app.tabs.length === 0 && app.view === 'session') app.view = 'hosts';
 }
 
 function disposePane(id: string) {
@@ -265,7 +294,7 @@ export function cycleTab(delta: number) {
   const n = app.tabs.length;
   if (n < 2) return;
   const index = app.tabs.findIndex((t) => t.id === app.activeTab);
-  app.activeTab = app.tabs[(index + delta + n) % n].id;
+  showTab(app.tabs[(index + delta + n) % n].id);
 }
 
 type Direction = 'left' | 'right' | 'up' | 'down';
@@ -366,8 +395,33 @@ export async function refreshHosts() {
 
 export async function saveHost(host: Host, password?: string, passphrase?: string): Promise<HostView | undefined> {
   const saved = await backend.saveHost(host, password, passphrase);
-  await refreshHosts();
+  // "Usada por" das credenciais muda junto.
+  await Promise.all([refreshHosts(), refreshCredentials()]);
   return app.hosts.find((h) => h.id === saved.id);
+}
+
+// ---------- Credenciais ----------
+
+export async function refreshCredentials() {
+  app.credentials = await backend.listCredentials();
+}
+
+export async function saveCredential(credential: Credential, secrets: SecretUpdate) {
+  const saved = await backend.saveCredential(credential, secrets);
+  // Os hosts mostram se há senha salva, e isso pode vir da credencial.
+  await Promise.all([refreshCredentials(), refreshHosts()]);
+  return saved;
+}
+
+export async function deleteCredential(id: string) {
+  await backend.deleteCredential(id);
+  await Promise.all([refreshCredentials(), refreshHosts()]);
+}
+
+export async function generateKey(label: string, username: string) {
+  const view = await backend.generateKey(label, username);
+  await refreshCredentials();
+  return view;
 }
 
 export async function deleteHost(id: string) {
@@ -453,7 +507,7 @@ export function closeDialog(value: unknown = null) {
   dialogResolve = null;
   resolve?.(value);
   const focused = activeTab()?.focused;
-  if (focused) queueMicrotask(() => panes.get(focused)?.focus());
+  if (focused && app.view === 'session') queueMicrotask(() => panes.get(focused)?.focus());
 }
 
 /**
@@ -492,7 +546,7 @@ async function resolveHost(error: ConnectFailure, host: HostView, options: Conne
         error: error.kind === 'authFailed' ? error.message : undefined,
       });
       if (!answer) return null;
-      if (answer.remember) queueMicrotask(() => void refreshHosts());
+      if (answer.remember) queueMicrotask(() => void Promise.all([refreshHosts(), refreshCredentials()]));
       return { ...options, [field]: answer.value, remember: answer.remember };
     }
     default:
@@ -502,14 +556,14 @@ async function resolveHost(error: ConnectFailure, host: HostView, options: Conne
 
 /** Atalhos globais. Registrado na fase de captura, então roda antes do xterm ver a tecla. */
 export function handleShortcut(e: KeyboardEvent) {
-  if (app.dialog) {
-    if (e.key === 'Escape') closeDialog(null);
-    return;
-  }
-  const focused = activeTab()?.focused;
+  // Diálogos (bits-ui) tratam o próprio Esc.
+  if (app.dialog) return;
+  const focused = app.view === 'session' ? activeTab()?.focused : undefined;
   let handled = true;
 
-  if (e.ctrlKey && e.shiftKey && !e.altKey) {
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyK') {
+    void openDialog({ type: 'palette' });
+  } else if (e.ctrlKey && e.shiftKey && !e.altKey) {
     switch (e.code) {
       case 'KeyT': newTab(cloneSpec(focused)); break;
       case 'KeyW': if (focused) closePane(focused); break;

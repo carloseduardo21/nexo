@@ -15,10 +15,29 @@ Build de release (gera instalador em `src-tauri/target/release/bundle`):
 npm run tauri build
 ```
 
+Só a interface, no navegador (`npm run dev` e abrir http://localhost:1420): fora do Tauri, o
+`src/dev-mock.ts` simula o backend com dados de exemplo. `?view=credentials|tunnels|settings|session`,
+`?dialog=host|newhost|credential|tunnel|palette|generate` e `?theme=light` abrem direto uma tela.
+O mock fica fora do build de produção.
+
+## Interface
+
+- **Hosts**: pastas e todos os hosts em cards (clique conecta; `⋯` ou botão direito: editar, duplicar,
+  túnel, excluir). Com uma sessão aberta, os hosts viram uma lista ao lado (botão na barra da esquerda).
+- **Credenciais**: usuário + senha, chave SSH (arquivo ou guardada no cofre) ou agente, usadas por
+  vários hosts — SSH e RDP. Trocou a senha? Muda num lugar só. "Gerar chave SSH" cria um par ed25519
+  e mostra a chave pública para o `authorized_keys`.
+- **Túneis** e **Configurações** (tema claro/escuro/sistema, cor de destaque, fonte do terminal,
+  importar do `~/.ssh/config`, importar/exportar hosts em JSON — sem senhas nem chaves).
+- `Ctrl+K`: conectar a qualquer host, abrir terminal ou ir para uma página.
+- Feita com [shadcn-svelte](https://shadcn-svelte.com) (bits-ui + Tailwind 4); componentes em
+  `src/lib/components/ui`. Os estilos dos painéis (terminal, RDP, SFTP) ficam em `src/panes.css`.
+
 ## Atalhos
 
 | Atalho | Ação |
 |---|---|
+| `Ctrl+K` | Conectar a um host / buscar |
 | `Ctrl+Shift+T` | Nova aba |
 | `Ctrl+Shift+D` / `Ctrl+Shift+E` | Dividir à direita / abaixo |
 | `Ctrl+Shift+W` | Fechar painel |

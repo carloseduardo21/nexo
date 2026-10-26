@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { asFailure, backend, type ConnectError, type ConnectFailure, type HostView, type RouteOptions, type ShellProfile } from './backend';
+import { DEFAULT_FONT, onAppearanceChange, settings, theme } from './settings.svelte';
 
 /** O que um painel mostra: terminal (local ou SSH) ou área de trabalho RDP (`rdp.ts`). */
 export type TermSpec = { kind: 'local'; profile: ShellProfile } | { kind: 'ssh'; host: HostView };
@@ -16,11 +17,42 @@ const isWindows = navigator.userAgent.includes('Windows');
 /** Linha do cursor terminando num pedido de senha: `[sudo] password for x:`, `Senha:`, `Enter passphrase…:`. */
 const PASSWORD_PROMPT = /(password|senha|passphrase|contraseña|passwort)[^\n]{0,80}:\s*$/i;
 
-export const terminalTheme: ITheme = {
-  background: '#0f1320',
+/** Cursor na cor de destaque escolhida nas configurações. */
+const ACCENT_CURSOR: Record<string, string> = { teal: '#3ee8c4', blue: '#7aa2ff', violet: '#b48cff', orange: '#ffa657', rose: '#ff7b9c' };
+
+/** Tema do xterm conforme o tema do app (o fundo é o mesmo `--terminal` do CSS). */
+export function terminalTheme(): ITheme {
+  const cursor = ACCENT_CURSOR[settings.accent] ?? ACCENT_CURSOR.teal;
+  return theme.dark ? { ...darkTheme, cursor } : { ...lightTheme, cursor: settings.accent === 'teal' ? '#0d9488' : cursor };
+}
+
+const lightTheme: ITheme = {
+  background: '#fbfbfd',
+  foreground: '#1f2430',
+  cursorAccent: '#fbfbfd',
+  selectionBackground: '#9ab4f066',
+  black: '#1f2430',
+  red: '#d1344b',
+  green: '#1a8a5a',
+  yellow: '#a46a00',
+  blue: '#2f62d8',
+  magenta: '#9a3fc4',
+  cyan: '#0f8a86',
+  white: '#c9ced9',
+  brightBlack: '#6b7285',
+  brightRed: '#e0485f',
+  brightGreen: '#229e69',
+  brightYellow: '#b87d00',
+  brightBlue: '#4675e6',
+  brightMagenta: '#ad55d6',
+  brightCyan: '#16a19c',
+  brightWhite: '#ffffff',
+};
+
+const darkTheme: ITheme = {
+  background: '#121520',
   foreground: '#d7deef',
-  cursor: '#3ee8c4',
-  cursorAccent: '#0f1320',
+  cursorAccent: '#121520',
   selectionBackground: '#3a4f8a99',
   black: '#1b2032',
   red: '#ff6b81',
@@ -82,6 +114,7 @@ export class TermPane {
   private promptActive = false;
   /** Tecla consumida no keydown: ignora também o keypress/keyup dela. */
   private swallowKey = '';
+  private unsubscribe: () => void;
 
   constructor(
     readonly spec: TermSpec,
@@ -89,15 +122,16 @@ export class TermPane {
   ) {
     this.host.className = 'term-host';
     this.term = new Terminal({
-      fontFamily: '"Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, "DejaVu Sans Mono", monospace',
-      fontSize: 14,
+      fontFamily: settings.fontFamily || DEFAULT_FONT,
+      fontSize: settings.fontSize,
       lineHeight: 1.15,
-      cursorBlink: true,
+      cursorBlink: settings.cursorBlink,
       scrollback: 10_000,
       allowProposedApi: true,
-      theme: terminalTheme,
+      theme: terminalTheme(),
       windowsPty: isWindows && spec.kind === 'local' && spec.profile.kind !== 'unix' ? { backend: 'conpty' } : undefined,
     });
+    this.unsubscribe = onAppearanceChange(() => this.applyAppearance());
     this.term.loadAddon(this.fitAddon);
     this.term.loadAddon(new Unicode11Addon());
     this.term.unicode.activeVersion = '11';
@@ -255,7 +289,17 @@ export class TermPane {
     if (text) this.term.paste(text);
   }
 
+  /** Tema, fonte e cursor mudaram nas configurações. */
+  private applyAppearance() {
+    this.term.options.theme = terminalTheme();
+    this.term.options.fontFamily = settings.fontFamily || DEFAULT_FONT;
+    this.term.options.fontSize = settings.fontSize;
+    this.term.options.cursorBlink = settings.cursorBlink;
+    this.fit();
+  }
+
   dispose() {
+    this.unsubscribe();
     if (this.sessionId !== null) backend.kill(this.sessionId);
     this.term.dispose();
     this.host.remove();

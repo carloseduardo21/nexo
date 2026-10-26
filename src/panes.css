@@ -1,0 +1,813 @@
+/* Estilos dos painéis (terminal, RDP, SFTP), anteriores ao Tailwind. As variáveis antigas apontam
+   para os tokens do tema (app.css), então seguem o claro/escuro e a cor de destaque. */
+:root {
+  --bg: var(--terminal);
+  --bg-chrome: var(--sidebar);
+  --bg-panel: var(--card);
+  --bg-hover: var(--accent);
+  --bg-active: var(--secondary);
+  --border-strong: color-mix(in oklch, var(--foreground) 18%, transparent);
+  --text: var(--foreground);
+  --text-muted: var(--muted-foreground);
+  --text-faint: color-mix(in oklch, var(--muted-foreground) 60%, transparent);
+  --accent-2: oklch(0.65 0.17 262);
+  --broadcast: oklch(0.8 0.15 75);
+  --danger: var(--destructive);
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* ---------- Indicador de tipo de shell ---------- */
+
+.kind-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.kind-powershell {
+  background: #5b8cff;
+}
+
+.kind-cmd {
+  background: #a0a8c0;
+}
+
+.kind-wsl {
+  background: #ff9e57;
+}
+
+.kind-unix {
+  background: var(--primary);
+}
+
+/* ---------- Área de trabalho e painéis ---------- */
+
+.workspace {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  background: var(--bg);
+}
+
+.tab-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  padding: 4px;
+}
+
+.tab-view.hidden {
+  display: none;
+}
+
+.split {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.split.col {
+  flex-direction: column;
+}
+
+.cell {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.divider {
+  flex: none;
+  position: relative;
+  z-index: 1;
+}
+
+.split.row > .divider {
+  width: 4px;
+  cursor: col-resize;
+}
+
+.split.col > .divider {
+  height: 4px;
+  cursor: row-resize;
+}
+
+.divider:hover,
+.divider:active {
+  background: var(--accent-2);
+}
+
+body.resizing-col,
+body.resizing-col * {
+  cursor: col-resize !important;
+}
+
+body.resizing-row,
+body.resizing-row * {
+  cursor: row-resize !important;
+}
+
+.pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.pane.focused {
+  border-color: var(--border-strong);
+}
+
+.pane.receiving {
+  border-color: color-mix(in srgb, var(--broadcast) 55%, transparent);
+}
+
+.pane.receiving.focused {
+  border-color: var(--broadcast);
+}
+
+.pane-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 4px 0 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-panel);
+}
+
+.pane.focused .pane-header {
+  color: var(--text);
+}
+
+.pane-header .title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.chip {
+  padding: 1px 8px;
+  border-radius: 9px;
+  font-size: 11px;
+  color: var(--broadcast);
+  background: color-mix(in srgb, var(--broadcast) 16%, transparent);
+}
+
+.chip.off {
+  color: var(--text-faint);
+  background: var(--bg-hover);
+}
+
+.pane-close {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  opacity: 0.6;
+}
+
+.pane-close:hover {
+  opacity: 1;
+  background: var(--bg-active);
+}
+
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  padding: 6px 0 0 10px;
+  background: var(--bg);
+}
+
+.term-host {
+  width: 100%;
+  height: 100%;
+}
+
+/* ---------- Área de trabalho remota (RDP) ---------- */
+
+.pane-body.rdp {
+  padding: 0;
+  background: #05070d;
+}
+
+.rdp-host {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  outline: none;
+}
+
+.rdp-canvas {
+  display: block;
+  image-rendering: auto;
+  touch-action: none;
+}
+
+.rdp-canvas[hidden],
+.rdp-status[hidden] {
+  display: none;
+}
+
+.rdp-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  background: #05070dcc;
+}
+
+.rdp-status p {
+  margin: 0;
+  max-width: 560px;
+  line-height: 1.5;
+  user-select: text;
+}
+
+.rdp-status.ended p {
+  color: var(--text);
+}
+
+.rdp-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* Barra de conexão: desce da borda de cima, como a do mstsc. */
+.rdp-bar {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 24px);
+  padding: 4px 6px 4px 12px;
+  border: 1px solid var(--border-strong);
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  background: #131829f2;
+  box-shadow: 0 6px 20px #0008;
+  transform: translate(-50%, -100%);
+  transition: transform 0.16s ease;
+  z-index: 2;
+}
+
+.rdp-bar.visible {
+  transform: translate(-50%, 0);
+}
+
+.rdp-bar-title {
+  margin-right: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.rdp-bar button {
+  padding: 3px 9px;
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rdp-bar button:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.rdp-key {
+  margin-right: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+}
+
+.rdp-key.on {
+  color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 14%, transparent);
+}
+
+.rdp-key[hidden],
+.rdp-toast[hidden] {
+  display: none;
+}
+
+.rdp-toast {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: #131829f2;
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 6px 20px #0008;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.pane.fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: #05070d;
+}
+
+.xterm {
+  height: 100%;
+}
+
+.xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* ---------- SFTP ---------- */
+
+.sftp-toggle.on {
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--primary);
+}
+
+.sftp-toggle.on:hover {
+  background: color-mix(in srgb, var(--primary) 22%, transparent);
+  color: var(--primary);
+}
+
+.sftp {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-chrome);
+  border-left: 1px solid var(--border);
+}
+
+.sftp-resizer {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  z-index: 2;
+  cursor: col-resize;
+}
+
+.sftp-resizer:hover {
+  background: color-mix(in srgb, var(--accent-2) 40%, transparent);
+}
+
+.sftp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  flex: none;
+  padding: 0 6px 0 12px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.sftp-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.icon-button.on {
+  color: var(--primary);
+}
+
+.sftp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  padding: 6px;
+}
+
+.sftp-path {
+  flex: 1;
+  min-width: 0;
+  margin: 0 4px;
+}
+
+.sftp-path input {
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: 0;
+  background: var(--bg-panel);
+  color: var(--text);
+  font: 12px 'Cascadia Mono', Consolas, monospace;
+}
+
+.sftp-path input:focus {
+  border-color: var(--accent-2);
+}
+
+.spinning svg {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+.sftp-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 6px 6px;
+  padding: 6px 6px 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.sftp-error span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.sftp-list {
+  container: sftp / inline-size;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 6px 6px;
+  outline: 0;
+}
+
+.sftp-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 5px;
+  cursor: default;
+}
+
+.sftp-row:hover {
+  background: var(--bg-hover);
+}
+
+.sftp-row.selected {
+  background: color-mix(in srgb, var(--accent-2) 24%, transparent);
+}
+
+.sftp-list:focus .sftp-row.selected {
+  background: color-mix(in srgb, var(--accent-2) 34%, transparent);
+}
+
+.sftp-icon {
+  position: relative;
+  display: grid;
+  color: var(--text-muted);
+}
+
+.sftp-icon.dir {
+  color: var(--accent-2);
+}
+
+.sftp-link {
+  position: absolute;
+  right: -4px;
+  bottom: -3px;
+  display: grid;
+  padding: 1px;
+  border-radius: 3px;
+  color: var(--primary);
+  background: var(--bg-chrome);
+}
+
+.sftp-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sftp-size,
+.sftp-date {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sftp-size {
+  min-width: 52px;
+  text-align: right;
+}
+
+/* Painel estreito: esconde a data. */
+@container sftp (max-width: 320px) {
+  .sftp-date {
+    display: none;
+  }
+}
+
+.sftp-empty,
+.sftp-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 20px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.sftp-empty p {
+  margin: 0;
+}
+
+.transfers {
+  flex: none;
+  max-height: 40%;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+
+.transfers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 4px;
+}
+
+.transfers-head h2 {
+  margin: 0;
+}
+
+.link-button {
+  font-size: 12px;
+  color: var(--accent-2);
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.transfers ul {
+  margin: 0;
+  padding: 0 6px 6px;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.transfer {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 6px;
+  color: var(--text-muted);
+}
+
+.transfer > svg {
+  margin-top: 2px;
+  flex: none;
+}
+
+.transfer.done > svg {
+  color: var(--primary);
+}
+
+.transfer.error > svg {
+  color: var(--danger);
+}
+
+.transfer-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.transfer-line {
+  display: flex;
+  gap: 8px;
+}
+
+.transfer-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.transfer-pct,
+.transfer-detail {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.transfer-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transfer-detail.error {
+  color: var(--danger);
+}
+
+.bar {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--bg-active);
+  overflow: hidden;
+}
+
+.bar > div {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), var(--accent-2));
+  transition: width 0.12s linear;
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 6px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  border: 2px dashed var(--primary);
+  border-radius: var(--radius);
+  color: var(--primary);
+  background: color-mix(in srgb, var(--bg-chrome) 85%, transparent);
+  pointer-events: none;
+}
+
+.drop-overlay strong {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-weight: 400;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.context-menu {
+  min-width: 200px;
+  margin-top: 0;
+}
+
+.context-menu kbd {
+  margin-left: auto;
+}
+
+.context-menu .separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+.context-menu .danger {
+  color: var(--danger);
+}
+
+.path {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.confirm-text {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.buttons .danger {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+/* ---------- Sugestão de senha em prompts ---------- */
+
+.secret-popup {
+  position: fixed;
+  z-index: 20;
+  width: 280px;
+  padding: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px #0009;
+}
+
+.secret-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--primary);
+}
+
+.secret-item {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 5px;
+  text-align: left;
+}
+
+.secret-item.active {
+  background: color-mix(in srgb, var(--accent-2) 26%, transparent);
+}
+
+.secret-label,
+.secret-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.secret-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.secret-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 3px;
+  font-size: 11px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
+.secret-hint kbd {
+  padding: 0 4px;
+  font-size: 10px;
+}

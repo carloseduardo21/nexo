@@ -39,6 +39,35 @@ export interface Host {
   jumpHostId: string;
   protocol: Protocol;
   rdp: RdpSettings;
+  /** Credencial salva (usuário, método e segredos vêm dela); '' = dados do próprio host. */
+  credentialId: string;
+}
+
+export interface Credential {
+  id: string;
+  label: string;
+  username: string;
+  auth: 'password' | 'key' | 'agent';
+  /** Arquivo da chave; '' com chave guardada no cofre (ou para tentar as padrão). */
+  keyPath: string;
+}
+
+export interface CredentialView extends Credential {
+  hasPassword: boolean;
+  hasPassphrase: boolean;
+  /** Chave privada guardada no cofre (colada ou gerada). */
+  hasKey: boolean;
+  /** Linha do authorized_keys da chave guardada. */
+  publicKey: string | null;
+  /** Nomes dos hosts que usam a credencial. */
+  usedBy: string[];
+}
+
+/** undefined mantém o salvo, '' apaga, texto troca. */
+export interface SecretUpdate {
+  password?: string;
+  passphrase?: string;
+  privateKey?: string;
 }
 
 export interface HostView extends Host {
@@ -201,6 +230,13 @@ export const backend = {
   saveHost: (host: Host, password?: string, passphrase?: string) =>
     invoke<Host>('host_save', { host, password, passphrase }),
   deleteHost: (id: string) => invoke<void>('host_delete', { id }),
+  listCredentials: () => invoke<CredentialView[]>('credentials_list'),
+  saveCredential: (credential: Credential, secrets: SecretUpdate) => invoke<Credential>('credential_save', { credential, secrets }),
+  deleteCredential: (id: string) => invoke<void>('credential_delete', { id }),
+  generateKey: (label: string, username: string) => invoke<CredentialView>('credential_generate_key', { label, username }),
+  /** Devolvem quantos hosts foram exportados/importados. */
+  exportVault: (path: string) => invoke<number>('vault_export', { path }),
+  importVault: (path: string) => invoke<number>('vault_import', { path }),
   /** Sem `path`: ~/.ssh/config. */
   sshConfigScan: (path?: string) => invoke<{ path: string; entries: SshConfigEntry[] }>('ssh_config_scan', { path }),
   /** Devolve quantos hosts foram criados (inclui jump hosts de que os escolhidos dependem). */
