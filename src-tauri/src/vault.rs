@@ -54,11 +54,13 @@ pub struct RdpSettings {
     pub clipboard: bool,
     /// Atalhos do sistema (Win, Alt+Tab…) e do Nexo vão para o servidor enquanto o painel tem foco.
     pub capture_keys: bool,
+    /// Pipeline gráfico (GFX/H.264): mais fluido; desligar volta aos bitmaps (RemoteFX).
+    pub gfx: bool,
 }
 
 impl Default for RdpSettings {
     fn default() -> Self {
-        Self { domain: String::new(), width: 0, height: 0, hidpi: false, clipboard: true, capture_keys: true }
+        Self { domain: String::new(), width: 0, height: 0, hidpi: false, clipboard: true, capture_keys: true, gfx: true }
     }
 }
 

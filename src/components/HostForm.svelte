@@ -22,7 +22,7 @@
     jumpHostId: initial?.jumpHostId ?? '',
     protocol: initial?.protocol ?? ('ssh' as Protocol),
   });
-  let rdp = $state({ domain: '', width: 0, height: 0, hidpi: false, clipboard: true, captureKeys: true, ...initial?.rdp });
+  let rdp = $state({ domain: '', width: 0, height: 0, hidpi: false, clipboard: true, captureKeys: true, gfx: true, ...initial?.rdp });
   let resolution = $state(rdp.width && rdp.height ? `${rdp.width}x${rdp.height}` : 'fit');
 
   function setProtocol(protocol: Protocol) {
@@ -178,6 +178,9 @@
       </label>
       <label class="check">
         <input type="checkbox" bind:checked={rdp.captureKeys} /> Capturar todos os atalhos (Win, Alt+Tab, Alt+F4…) — Ctrl+Alt+Home libera
+      </label>
+      <label class="check">
+        <input type="checkbox" bind:checked={rdp.gfx} /> Pipeline gráfico GFX/H.264 (mais fluido; desligue se a tela falhar)
       </label>
     {:else}
     <div class="segmented" role="radiogroup" aria-label="Autenticação">

@@ -85,6 +85,10 @@ npm run tauri build
   capturar: use o botão da barra de conexão.
 - **Área de transferência** (texto, nos dois sentidos): copiou no servidor, já está no Windows;
   copiou no Windows, fica disponível no servidor quando o painel ganha o foco.
+- **GFX** (pipeline gráfico, ligado por padrão): H.264 e RemoteFX progressivo, bem mais fluido que
+  bitmaps. O H.264 é decodificado pelo OpenH264 compilado junto (instalar o NASM antes do build deixa
+  a decodificação mais rápida). No xRDP, o H.264 depende de o servidor ter sido compilado com ele;
+  sem isso, ele usa o RemoteFX progressivo.
 - **Barra de conexão**: leve o mouse à borda de cima do painel — Ctrl+Alt+Del, tela cheia, desconectar.
 - Painel encerrado: `Enter` ou o botão reconecta.
 

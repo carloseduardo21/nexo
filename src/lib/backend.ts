@@ -22,6 +22,8 @@ export interface RdpSettings {
   clipboard: boolean;
   /** Win, Alt+Tab e os atalhos do Nexo vão para o servidor enquanto o painel tem foco (Ctrl+Alt+Home solta). */
   captureKeys: boolean;
+  /** Pipeline gráfico (GFX/H.264): mais fluido; desligado volta aos bitmaps. */
+  gfx: boolean;
 }
 
 export interface Host {

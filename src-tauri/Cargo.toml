@@ -40,6 +40,7 @@ ironrdp-svc = "0.9"
 ironrdp-displaycontrol = "0.9"
 ironrdp-input = "0.8"
 ironrdp-cliprdr = "0.8"
+ironrdp-egfx = { version = "0.4", features = ["openh264-bundled"] }
 arboard = { version = "3.7", default-features = false }
 
 [target.'cfg(windows)'.dependencies]

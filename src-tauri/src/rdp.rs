@@ -14,6 +14,8 @@ use ironrdp_connector::{ClientConnector, ConnectionResult, ConnectorErrorKind, C
 use ironrdp_core::WriteBuf;
 use ironrdp_displaycontrol::client::DisplayControlClient;
 use ironrdp_displaycontrol::pdu::MonitorLayoutEntry;
+use ironrdp_egfx::client::{GraphicsPipelineClient, GraphicsPipelineHandler};
+use ironrdp_egfx::decode::{H264Decoder, OpenH264Decoder};
 use ironrdp_graphics::image_processing::PixelFormat;
 use ironrdp_graphics::pointer::DecodedPointer;
 use ironrdp_input::{Database, MouseButton, MousePosition, Operation, Scancode, WheelRotations};
@@ -278,10 +280,22 @@ async fn open(target: &mut Target, size: DesktopSize) -> Result<(ConnectionResul
         }
     };
 
-    let config = connector_config(host, &target.password, size);
+    let mut config = connector_config(host, &target.password, size);
     // Endereço do cliente só aparece em logs do servidor; atrás de um gateway não há um real.
     let client_addr = "127.0.0.1:0".parse().expect("endereço fixo");
-    let drdynvc = ironrdp_dvc::DrdynvcClient::new().with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new())));
+    // Canais dinâmicos com factory: o servidor os reabre a cada reativação (o xRDP faz isso ao mudar a
+    // resolução) e cada abertura precisa de um processador novo.
+    let mut drdynvc = ironrdp_dvc::DrdynvcClient::new()
+        .with_dynamic_channel_factory(ironrdp_displaycontrol::CHANNEL_NAME, || DisplayControlClient::new(|_| Ok(Vec::new())));
+    if host.rdp.gfx {
+        // Pipeline gráfico (GFX): H.264 e codecs progressivos, bem mais fluido que bitmaps. A sessão
+        // compõe os quadros na mesma imagem; sem decodificador H.264, anuncia só o que sabe pintar.
+        drdynvc = drdynvc.with_dynamic_channel_factory(ironrdp_egfx::CHANNEL_NAME, || {
+            let decoder = OpenH264Decoder::new().ok().map(|d| Box::new(d) as Box<dyn H264Decoder>);
+            GraphicsPipelineClient::new(Box::new(GfxHandler), decoder)
+        });
+        config.support_dyn_vc_gfx_protocol = true;
+    }
     let mut connector = ClientConnector::new(config, client_addr).with_static_channel(drdynvc);
     if host.rdp.clipboard {
         let backend = rdp_clipboard::Backend::new(target.clipboard.clone());
@@ -352,6 +366,11 @@ fn connector_error(e: ironrdp_connector::ConnectorError) -> ConnectError {
         _ => ConnectError::Other { message },
     }
 }
+
+/// Os eventos do GFX não interessam: a sessão já compõe o resultado na imagem.
+struct GfxHandler;
+
+impl GraphicsPipelineHandler for GfxHandler {}
 
 /// Kerberos precisa falar com o KDC; o Nexo autentica por NTLM (NLA) ou pelo login do servidor.
 struct NoKerberos;
@@ -454,6 +473,8 @@ struct Screen<'a> {
     on_frame: &'a Channel<InvokeResponseBody>,
     dirty: Vec<InclusiveRectangle>,
     in_flight: usize,
+    /// Tamanho que o frontend conhece (o GFX pode trocar a imagem no meio do processamento).
+    size: (u16, u16),
 }
 
 impl Screen<'_> {
@@ -466,6 +487,9 @@ impl Screen<'_> {
     }
 
     fn flush(&mut self, image: &DecodedImage) -> Result<(), String> {
+        if self.size != (image.width(), image.height()) {
+            self.send_size(image)?;
+        }
         if self.dirty.is_empty() || self.in_flight >= MAX_IN_FLIGHT {
             return Ok(());
         }
@@ -499,6 +523,7 @@ impl Screen<'_> {
         let mut msg = vec![MSG_SIZE];
         msg.extend_from_slice(&image.width().to_le_bytes());
         msg.extend_from_slice(&image.height().to_le_bytes());
+        self.size = (image.width(), image.height());
         self.dirty.clear();
         self.on_frame.send(InvokeResponseBody::Raw(msg)).map_err(|_| "painel fechado".to_string())?;
         // Tela nova: o próximo envio é a imagem toda.
@@ -581,7 +606,7 @@ async fn active_session(
     }
     .build();
     let mut input = Database::new();
-    let mut screen = Screen { on_frame, dirty: Vec::new(), in_flight: 0 };
+    let mut screen = Screen { on_frame, dirty: Vec::new(), in_flight: 0, size: (0, 0) };
     screen.send_size(&image)?;
     // Tamanho pedido enquanto o canal de resolução ainda não estava pronto.
     let mut pending_size: Option<(u16, u16)> = None;
@@ -882,16 +907,20 @@ mod live {
             }
             tokio::time::sleep(Duration::from_millis(1500)).await;
             let seen = sizes(&messages);
+            let shot = screenshot(&messages.lock().unwrap());
             if let Ok(path) = std::env::var("NEXO_RDP_SHOT") {
-                std::fs::write(path, screenshot(&messages.lock().unwrap())).unwrap();
+                std::fs::write(path, &shot).unwrap();
             }
             commands.send(Command::Close).unwrap();
-            seen
+            (seen, shot)
         });
 
         let end = run(&mut target, result, framed, command_rx, clip_rx, &on_frame).await;
-        let seen = driver.await.unwrap();
+        let (seen, shot) = driver.await.unwrap();
         assert!(seen.contains(&(1280, 720)), "resolução não mudou: {seen:?}");
+        // A tela depois da troca de resolução tem que ter conteúdo (o xterm), não só preto.
+        let lit = shot[4..].as_chunks::<4>().0.iter().filter(|&&[r, g, b, _]| r > 40 || g > 40 || b > 40).count();
+        assert!(lit > 5_000, "tela vazia depois de mudar a resolução ({lit} pixels acesos)");
         assert_eq!(end, None, "sessão terminou com erro");
     }
 
