@@ -146,6 +146,25 @@ export interface HostMetrics {
   disks: { mount: string; device: string; total: number; used: number }[];
 }
 
+export interface Container {
+  id: string;
+  name: string;
+  image: string;
+  state: 'running' | 'exited' | 'paused' | 'restarting' | 'created' | 'dead' | string;
+  status: string;
+  ports: string;
+  /** Projeto do Docker Compose ('' se não for de um). */
+  project: string;
+  cpu: number | null;
+  mem: number | null;
+  memUsage: string;
+}
+
+export type ContainerAction = 'start' | 'stop' | 'restart' | 'pause' | 'unpause' | 'remove';
+
+/** Terminal SSH que roda um comando em vez do shell. */
+export type Exec = { kind: 'dockerLogs'; container: string } | { kind: 'dockerShell'; container: string };
+
 export interface TransferProgress {
   done: number;
   total: number;
@@ -218,10 +237,13 @@ export const backend = {
     onData: DataHandler,
     onExit: ExitHandler,
     onRtt: (ms: number) => void,
+    /** `parent`: sessão cuja conexão é reaproveitada (sem novo login), se ainda estiver aberta. */
+    exec?: Exec,
+    parent?: number | null,
   ) => {
     const rtt = new Channel<number>();
     rtt.onmessage = onRtt;
-    return invoke<number>('ssh_connect', { hostId, options, cols, rows, ...channels(onData, onExit), onRtt: rtt });
+    return invoke<number>('ssh_connect', { hostId, options, cols, rows, exec, parent, ...channels(onData, onExit), onRtt: rtt });
   },
 
   /** onFrame: mensagens binárias de tela (ver `rdp.rs`); onExit: motivo do fim, ou null se foi normal. */
@@ -262,6 +284,8 @@ export const backend = {
   sshConfigImport: (path: string, aliases: string[]) => invoke<number>('ssh_config_import', { path, aliases }),
 
   hostMetrics: (id: number) => invoke<HostMetrics>('host_metrics', { id }),
+  dockerList: (id: number) => invoke<Container[]>('docker_list', { id }),
+  dockerAction: (id: number, container: string, action: ContainerAction) => invoke<void>('docker_action', { id, container, action }),
 
   sftpHome: (id: number) => invoke<string>('sftp_home', { id }),
   sftpList: (id: number, path: string) => invoke<RemoteEntry[]>('sftp_list', { id, path }),

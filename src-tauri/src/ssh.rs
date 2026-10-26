@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -121,6 +122,11 @@ impl SshSession {
     pub async fn run(&self, command: &str) -> Result<Output, String> {
         self.conn.run(command).await
     }
+
+    /// A conexão do terminal, para abrir outro terminal nela (`connect`) sem novo login.
+    pub fn connection(&self) -> Option<Arc<Connection>> {
+        (!self.conn.is_closed()).then(|| self.conn.share())
+    }
 }
 
 const RUN_TIMEOUT: Duration = Duration::from_secs(20);
@@ -184,9 +190,25 @@ pub struct Connection {
     pub forwards: Forwards,
     /// Conexões com os jump hosts do caminho; precisam viver enquanto esta viver.
     jumps: Vec<client::Handle<Client>>,
+    /// Terminais usando a conexão (o do usuário e os abertos a partir dele, ex.: logs de um
+    /// container). A conexão fecha quando o último sai (`release`).
+    users: AtomicUsize,
 }
 
 impl Connection {
+    /// Mais um terminal na mesma conexão.
+    pub fn share(self: &Arc<Self>) -> Arc<Self> {
+        self.users.fetch_add(1, Ordering::AcqRel);
+        self.clone()
+    }
+
+    /// Um terminal saiu; o último fecha a conexão.
+    pub async fn release(&self) {
+        if self.users.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.close().await;
+        }
+    }
+
     /// Encerra a conexão e, depois, os jump hosts (do mais próximo ao mais distante).
     pub async fn close(&self) {
         let _ = self.handle.disconnect(Disconnect::ByApplication, "", "pt-BR").await;
@@ -284,32 +306,31 @@ impl client::Handler for Client {
     }
 }
 
+/// Abre um terminal na conexão (que passa a ser deste terminal também; ver `Connection::share`).
+/// Sem `command`, o shell do usuário; com, roda o comando num PTY (ex.: `docker logs -f`).
 #[allow(clippy::too_many_arguments)]
 pub async fn connect(
     app: AppHandle,
     id: u32,
-    route: &Route,
-    opts: &Options,
+    conn: Arc<Connection>,
+    command: Option<&str>,
     cols: u16,
     rows: u16,
     on_data: Channel<InvokeResponseBody>,
     on_exit: Channel<Option<u32>>,
     on_rtt: Channel<f64>,
-) -> Result<SshSession, Failure> {
-    let conn = establish(route, opts).await?;
-    let channel = match open_shell(&conn.handle, cols, rows).await {
+) -> Result<SshSession, String> {
+    let channel = match open_shell(&conn.handle, command, cols, rows).await {
         Ok(channel) => channel,
         Err(e) => {
-            conn.close().await;
-            let target = route.last().map(|(h, _)| h.id.as_str()).unwrap_or_default();
-            return Err(Failure::other(target, e));
+            conn.release().await;
+            return Err(e.to_string());
         }
     };
 
     let (commands, mut command_rx) = mpsc::unbounded_channel();
     let flow = Arc::new(Flow::default());
     let task_flow = flow.clone();
-    let conn = Arc::new(conn);
     let task_conn = conn.clone();
 
     tauri::async_runtime::spawn(async move {
@@ -349,17 +370,25 @@ pub async fn connect(
             }
         }
         app.state::<SessionManager>().remove(id);
-        task_conn.close().await;
+        task_conn.release().await;
         let _ = on_exit.send(exit_code);
     });
 
     Ok(SshSession { commands, flow, conn, sftp: Default::default() })
 }
 
-async fn open_shell(handle: &client::Handle<Client>, cols: u16, rows: u16) -> Result<russh::Channel<client::Msg>, russh::Error> {
+async fn open_shell(
+    handle: &client::Handle<Client>,
+    command: Option<&str>,
+    cols: u16,
+    rows: u16,
+) -> Result<russh::Channel<client::Msg>, russh::Error> {
     let channel = handle.channel_open_session().await?;
     channel.request_pty(false, "xterm-256color", cols.into(), rows.into(), 0, 0, &[]).await?;
-    channel.request_shell(false).await?;
+    match command {
+        Some(command) => channel.exec(false, command).await?,
+        None => channel.request_shell(false).await?,
+    }
     Ok(channel)
 }
 
@@ -394,7 +423,7 @@ pub async fn establish(route: &[(Host, Secret)], opts: &Options) -> Result<Conne
             }
         };
         match attempt.await {
-            Ok((handle, forwards)) if i + 1 == route.len() => return Ok(Connection { handle, forwards, jumps }),
+            Ok((handle, forwards)) if i + 1 == route.len() => return Ok(Connection { handle, forwards, jumps, users: AtomicUsize::new(1) }),
             Ok((handle, _)) => jumps.push(handle),
             Err(error) => {
                 for jump in jumps.iter().rev() {
@@ -646,6 +675,21 @@ fn default_keys() -> Vec<PathBuf> {
 #[cfg(test)]
 mod live {
     use super::*;
+
+    /// Terminal aberto a partir de outro (logs de container) divide a conexão: ela só fecha
+    /// quando o último sai.
+    #[tokio::test]
+    #[ignore]
+    async fn live_shared_connection() {
+        let conn = Arc::new(crate::hostinfo::live::connect("NEXO_SSH_PORT", 2222).await);
+        let second = conn.share();
+        conn.release().await;
+        assert!(!second.is_closed());
+        assert_eq!(second.run("echo ok").await.unwrap().stdout().trim(), "ok");
+        second.release().await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(second.is_closed());
+    }
 
     /// Chave gerada e guardada no cofre (sem arquivo): a pública vai para o `authorized_keys` do container.
     #[tokio::test]

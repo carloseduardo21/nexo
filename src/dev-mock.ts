@@ -57,6 +57,29 @@ function metrics() {
   };
 }
 
+const container = (name: string, image: string, state: string, status: string, project = '', cpu: number | null = null, mem = '') => ({
+  id: [...name].map((c) => c.charCodeAt(0).toString(16)).join('').padEnd(64, '0').slice(0, 64),
+  name,
+  image,
+  state,
+  status,
+  ports: '',
+  project,
+  cpu,
+  mem: cpu === null ? null : 1.2,
+  memUsage: mem,
+});
+const containers = [
+  container('portainer', 'portainer/portainer-ce:2.21', 'running', 'Up 3 days', '', 0.1, '38.2MiB / 7.6GiB'),
+  container('backup-job', 'restic/restic:0.17', 'exited', 'Exited (0) 5 hours ago'),
+  container('loja-api-1', 'ghcr.io/empresa/loja-api:1.8.2', 'running', 'Up 2 days (healthy)', 'loja', 12.4, '412.6MiB / 7.6GiB'),
+  container('loja-db-1', 'postgres:16', 'running', 'Up 2 days (healthy)', 'loja', 3.2, '1.1GiB / 7.6GiB'),
+  container('loja-redis-1', 'redis:7-alpine', 'paused', 'Up 2 days (Paused)', 'loja', null),
+  container('loja-worker-1', 'ghcr.io/empresa/loja-api:1.8.2', 'restarting', 'Restarting (1) 4 seconds ago', 'loja', null),
+  container('grafana', 'grafana/grafana:11.2.0', 'running', 'Up 6 hours', 'monitoring', 0.8, '96.4MiB / 7.6GiB'),
+  container('prometheus', 'prom/prometheus:v2.54.1', 'running', 'Up 6 hours', 'monitoring', 2.1, '220.9MiB / 7.6GiB'),
+];
+
 export function installDevMock() {
   mockWindows('main');
   const view = new URLSearchParams(location.search).get('view');
@@ -82,6 +105,8 @@ export function installDevMock() {
         return 2;
       case 'host_metrics':
         return metrics();
+      case 'docker_list':
+        return containers;
       default:
         return null;
     }

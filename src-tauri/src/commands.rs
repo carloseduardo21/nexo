@@ -12,6 +12,7 @@ use russh_sftp::client::SftpSession;
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Manager, State};
 
+use crate::docker;
 use crate::hostinfo;
 use crate::local;
 use crate::rdp;
@@ -55,16 +56,52 @@ pub async fn ssh_connect(
     options: Options,
     cols: u16,
     rows: u16,
+    exec: Option<Exec>,
+    parent: Option<u32>,
     on_data: Channel<InvokeResponseBody>,
     on_exit: Channel<Option<u32>>,
     on_rtt: Channel<f64>,
 ) -> Result<u32, Failure> {
-    let route = vault.route(&host_id).map_err(|e| Failure::other(&host_id, e))?;
+    let command = exec.map(|e| e.command()).transpose().map_err(|e| Failure::other(&host_id, e))?;
+    // Aberto a partir de outro terminal (ex.: logs de um container): usa a conexão dele, sem
+    // novo login. Se ele já fechou, conecta de novo.
+    let shared = parent.and_then(|p| sessions.get(p)).and_then(|s| s.as_ssh().and_then(|ssh| ssh.connection()));
+    let conn = match shared {
+        Some(conn) => conn,
+        None => {
+            let route = vault.route(&host_id).map_err(|e| Failure::other(&host_id, e))?;
+            let conn = Arc::new(ssh::establish(&route, &options).await?);
+            remember_secrets(&vault, &options);
+            conn
+        }
+    };
     let id = sessions.next_id();
-    let session = ssh::connect(app, id, &route, &options, cols, rows, on_data, on_exit, on_rtt).await?;
+    let session = ssh::connect(app, id, conn, command.as_deref(), cols, rows, on_data, on_exit, on_rtt)
+        .await
+        .map_err(|e| Failure::other(&host_id, e))?;
     sessions.insert(id, Arc::new(session));
-    remember_secrets(&vault, &options);
     Ok(id)
+}
+
+/// Terminal que roda um comando em vez do shell.
+#[derive(serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Exec {
+    DockerLogs { container: String },
+    DockerShell { container: String },
+}
+
+impl Exec {
+    fn command(&self) -> Result<String, String> {
+        let (Self::DockerLogs { container } | Self::DockerShell { container }) = self;
+        if !docker::valid_id(container) {
+            return Err("container inválido".into());
+        }
+        Ok(match self {
+            Self::DockerLogs { .. } => docker::logs_command(container),
+            Self::DockerShell { .. } => docker::shell_command(container),
+        })
+    }
 }
 
 #[tauri::command]
@@ -297,6 +334,29 @@ pub async fn host_metrics(sessions: State<'_, SessionManager>, id: u32) -> Resul
         Some(0) => hostinfo::parse(&out.stdout()),
         Some(3) => Err("métricas só funcionam em servidores Linux".into()),
         _ => Err(format!("o servidor não devolveu as métricas: {}", out.stderr())),
+    }
+}
+
+#[tauri::command]
+pub async fn docker_list(sessions: State<'_, SessionManager>, id: u32) -> Result<Vec<docker::Container>, String> {
+    let session = ssh_for(&sessions, id)?;
+    let out = session.as_ssh().unwrap().run(docker::LIST_SCRIPT).await?;
+    match out.status {
+        Some(0) => Ok(docker::parse_list(&out.stdout())),
+        status => Err(docker::describe_error(status, &out.stderr())),
+    }
+}
+
+#[tauri::command]
+pub async fn docker_action(sessions: State<'_, SessionManager>, id: u32, container: String, action: docker::Action) -> Result<(), String> {
+    if !docker::valid_id(&container) {
+        return Err("container inválido".into());
+    }
+    let session = ssh_for(&sessions, id)?;
+    let out = session.as_ssh().unwrap().run(&docker::action_command(&container, action)).await?;
+    match out.status {
+        Some(0) => Ok(()),
+        status => Err(docker::describe_error(status, &out.stderr())),
     }
 }
 

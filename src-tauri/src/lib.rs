@@ -1,4 +1,5 @@
 mod commands;
+mod docker;
 mod flow;
 mod hostinfo;
 mod keyhook;
@@ -53,6 +54,8 @@ pub fn run() {
             commands::session_resize,
             commands::session_kill,
             commands::host_metrics,
+            commands::docker_list,
+            commands::docker_action,
             commands::sftp_home,
             commands::sftp_list,
             commands::sftp_mkdir,

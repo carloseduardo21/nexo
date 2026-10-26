@@ -52,7 +52,7 @@ O mock fica fora do build de produção.
 | `Ctrl+Shift+W` | Fechar painel |
 | `Ctrl+Shift+B` | Broadcast na aba atual |
 | `Ctrl+Shift+F` | Painel de arquivos (SFTP) |
-| `Ctrl+Shift+M` | Painel do host (métricas) |
+| `Ctrl+Shift+M` | Painel do host (métricas e containers) |
 | `Alt+setas` | Navegar entre painéis |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Próxima / anterior aba |
 | `Ctrl+C` (com seleção) / `Ctrl+V` | Copiar / colar |
@@ -94,6 +94,10 @@ O mock fica fora do build de produção.
   (taxa de download/upload) e uso de cada disco. Atualiza a cada 2 segundos enquanto está aberto.
 - Usa um canal extra na conexão do terminal e só lê `/proc` e `df`: nada é instalado no servidor.
   Funciona em servidores Linux (inclusive Alpine/BusyBox).
+- Aba **Containers**: os containers Docker do servidor, agrupados por projeto do Compose, com
+  status, CPU e memória (a cada 5 s). Iniciar, parar, reiniciar, pausar, remover (só parados).
+  **Logs** (acompanhando ao vivo) e **shell** no container abrem numa aba nova, na mesma conexão
+  SSH — sem novo login. Precisa do usuário no grupo `docker` (o painel avisa se não estiver).
 
 ## Túneis
 
@@ -136,7 +140,8 @@ O mock fica fora do build de produção.
   `Channel` em binário; o input passa por uma fila por sessão que preserva a ordem das teclas.
   `flow.rs` pausa a leitura quando o frontend fica mais de 2 MB atrás (ack do xterm.js).
   `sftp.rs` abre o subsistema SFTP sob demanda na conexão de cada `SshSession`.
-  `hostinfo.rs` lê as métricas do servidor (um script em `/proc` num canal extra da sessão).
+  `hostinfo.rs` lê as métricas do servidor (um script em `/proc` num canal extra da sessão);
+  `docker.rs` lista os containers e executa as ações pelo CLI `docker` do servidor.
   `tunnel.rs` mantém os túneis (conexão própria via `ssh::establish`, reconexão, SOCKS5).
   `rdp.rs` é a sessão RDP (IronRDP): decodifica a tela e manda só as regiões alteradas, com ack
   por mensagem desenhada; input chega por `rdp_input` (scancodes, mouse, roda).

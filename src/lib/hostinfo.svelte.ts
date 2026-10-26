@@ -1,9 +1,12 @@
-import { backend, type HostMetrics } from './backend';
-import { app } from './state.svelte';
+import { toast } from 'svelte-sonner';
+import { backend, type Container, type ContainerAction, type HostMetrics } from './backend';
+import { app, newTab, openDialog } from './state.svelte';
 
 /** Amostras guardadas para os gráficos (2 s cada: 2 minutos). */
 const HISTORY = 60;
 export const METRICS_INTERVAL = 2000;
+/** `docker stats --no-stream` leva ~1–2 s; mais devagar que as métricas. */
+export const CONTAINERS_INTERVAL = 5000;
 
 /** Métricas de um painel SSH: última leitura e o que dá para derivar de duas leituras seguidas. */
 export interface Monitor {
@@ -20,9 +23,20 @@ export interface Monitor {
   at: number;
 }
 
+/** Containers do servidor de um painel SSH. */
+export interface Containers {
+  sessionId: number;
+  list: Container[] | null;
+  error: string;
+  /** Containers com uma ação em andamento (id → ação). */
+  busy: Record<string, ContainerAction>;
+}
+
 export const hostinfo = $state({
   tab: 'metrics' as 'metrics' | 'containers',
+  showStopped: true,
   monitors: {} as Record<string, Monitor>,
+  containers: {} as Record<string, Containers>,
 });
 
 const inFlight = new Set<string>();
@@ -71,6 +85,87 @@ export async function sample(paneId: string) {
 
 export const memPercent = (m: HostMetrics) => (m.memTotal > 0 ? ((m.memTotal - m.memAvailable) / m.memTotal) * 100 : 0);
 
-export function forgetMonitor(paneId: string) {
+export function forgetPane(paneId: string) {
   delete hostinfo.monitors[paneId];
+  delete hostinfo.containers[paneId];
+}
+
+// ---------- Containers ----------
+
+const loading = new Set<string>();
+
+/** Containers do painel, criando (ou recriando, se reconectou) o estado. */
+function containersOf(paneId: string): Containers | undefined {
+  const sessionId = app.meta[paneId]?.sessionId;
+  if (sessionId == null) return undefined;
+  const current = hostinfo.containers[paneId];
+  if (current?.sessionId === sessionId) return current;
+  hostinfo.containers[paneId] = { sessionId, list: null, error: '', busy: {} };
+  return hostinfo.containers[paneId];
+}
+
+export async function loadContainers(paneId: string) {
+  const state = containersOf(paneId);
+  if (!state || loading.has(paneId)) return;
+  loading.add(paneId);
+  try {
+    const list = await backend.dockerList(state.sessionId);
+    if (hostinfo.containers[paneId] === state) Object.assign(state, { list, error: '' });
+  } catch (err) {
+    if (hostinfo.containers[paneId] === state) state.error = message(err);
+  } finally {
+    loading.delete(paneId);
+  }
+}
+
+const verbs: Record<ContainerAction, string> = {
+  start: 'iniciado',
+  stop: 'parado',
+  restart: 'reiniciado',
+  pause: 'pausado',
+  unpause: 'retomado',
+  remove: 'removido',
+};
+
+export async function containerAction(paneId: string, c: Container, action: ContainerAction) {
+  const state = containersOf(paneId);
+  if (!state || state.busy[c.id]) return;
+  if (action === 'remove' || action === 'stop') {
+    const remove = action === 'remove';
+    const ok = await openDialog<boolean>({
+      type: 'confirm',
+      title: `${remove ? 'Remover' : 'Parar'} ${c.name}?`,
+      message: remove
+        ? 'O container é apagado do servidor (a imagem e os volumes nomeados continuam).'
+        : 'O container recebe SIGTERM e, se não terminar em 10 segundos, SIGKILL.',
+      confirm: remove ? 'Remover' : 'Parar',
+      danger: true,
+    });
+    if (!ok) return;
+  }
+  state.busy[c.id] = action;
+  try {
+    await backend.dockerAction(state.sessionId, c.id, action);
+    toast.success(`${c.name} ${verbs[action]}`);
+  } catch (err) {
+    toast.error(`${c.name}: ${message(err)}`);
+  } finally {
+    delete state.busy[c.id];
+  }
+  await loadContainers(paneId);
+}
+
+/** Logs (acompanhando) ou shell do container numa aba nova, na conexão do painel. */
+export function openContainerTerminal(paneId: string, c: Container, kind: 'logs' | 'shell') {
+  const meta = app.meta[paneId];
+  if (meta?.spec.kind !== 'ssh') return;
+  newTab({
+    kind: 'ssh',
+    host: meta.spec.host,
+    exec: {
+      exec: { kind: kind === 'logs' ? 'dockerLogs' : 'dockerShell', container: c.id },
+      title: `${kind === 'logs' ? 'logs' : 'shell'}: ${c.name}`,
+      parentSession: meta.sessionId,
+    },
+  });
 }

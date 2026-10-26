@@ -96,6 +96,7 @@ export const hostSpec = (host: HostView): PaneSpec => ({ kind: host.protocol ===
 /** Spec para um painel novo "igual" ao focado (nova aba, dividir). Uma segunda sessão RDP derrubaria a primeira. */
 function cloneSpec(paneId: string | undefined): PaneSpec | undefined {
   const spec = paneId ? app.meta[paneId]?.spec : undefined;
+  if (spec?.kind === 'ssh' && spec.exec) return { kind: 'ssh', host: spec.host }; // logs/shell de container: abre o shell do host
   return spec?.kind === 'rdp' ? app.profiles[0] && localSpec(app.profiles[0]) : spec;
 }
 
@@ -131,7 +132,7 @@ export async function init() {
 
 function createPane(spec: PaneSpec, tabId: string): string {
   const id = uid('p');
-  const title = spec.kind === 'local' ? spec.profile.name : spec.host.label;
+  const title = spec.kind === 'local' ? spec.profile.name : spec.kind === 'ssh' && spec.exec ? spec.exec.title : spec.host.label;
   const kind = spec.kind === 'local' ? spec.profile.kind : spec.kind;
   app.meta[id] = { title, spec, kind, exited: false, muted: false, latency: {}, sessionId: null, passwordPrompt: null };
   paneTab.set(id, tabId);
@@ -164,7 +165,8 @@ function createPane(spec: PaneSpec, tabId: string): string {
         if (app.meta[id]) app.meta[id].exited = true;
       },
       onTitle: (title) => {
-        if (app.meta[id] && title) app.meta[id].title = title;
+        // Logs/shell de container mantêm o nome do container.
+        if (app.meta[id] && title && !(spec.kind === 'ssh' && spec.exec)) app.meta[id].title = title;
       },
       onFocus: () => setFocus(id),
       onSession: (sessionId) => {

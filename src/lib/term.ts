@@ -2,11 +2,19 @@ import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
-import { asFailure, backend, type ConnectError, type ConnectFailure, type HostView, type RouteOptions, type ShellProfile } from './backend';
+import { asFailure, backend, type ConnectError, type ConnectFailure, type Exec, type HostView, type RouteOptions, type ShellProfile } from './backend';
 import { DEFAULT_FONT, onAppearanceChange, settings, theme } from './settings.svelte';
 
 /** O que um painel mostra: terminal (local ou SSH) ou área de trabalho RDP (`rdp.ts`). */
-export type TermSpec = { kind: 'local'; profile: ShellProfile } | { kind: 'ssh'; host: HostView };
+export type TermSpec = { kind: 'local'; profile: ShellProfile } | { kind: 'ssh'; host: HostView; exec?: ExecSpec };
+
+/** Terminal que roda um comando (logs/shell de um container) na conexão de outro painel. */
+export interface ExecSpec {
+  exec: Exec;
+  title: string;
+  /** Sessão de onde veio: a conexão dela é reaproveitada enquanto existir. */
+  parentSession: number | null;
+}
 export type PaneSpec = TermSpec | { kind: 'rdp'; host: HostView };
 
 /** Acks em lotes: o backend só pausa a leitura acima de 2 MB pendentes, então folga de 32 KB é irrelevante. */
@@ -166,7 +174,7 @@ export class TermPane {
     if (this.started) return;
     this.started = true;
     this.exited = false;
-    if (this.spec.kind === 'ssh') return this.connectSsh(this.spec.host);
+    if (this.spec.kind === 'ssh') return this.connectSsh(this.spec.host, this.spec.exec);
     try {
       this.sessionId = await backend.spawnPty(this.spec.profile.id, this.term.cols, this.term.rows, this.onData, this.onExit);
       this.cb.onSession(this.sessionId);
@@ -183,15 +191,23 @@ export class TermPane {
     void this.start();
   }
 
-  private async connectSsh(host: HostView) {
+  private async connectSsh(host: HostView, exec?: ExecSpec) {
     const jump = host.jumpHostId ? this.cb.hostLabel(host.jumpHostId) : undefined;
     const via = jump ? ` via ${jump}` : '';
-    this.term.write(`\x1b[2mConectando a ${host.username}@${host.hostname}:${host.port}${via}…\x1b[0m\r\n`);
+    if (!exec) this.term.write(`\x1b[2mConectando a ${host.username}@${host.hostname}:${host.port}${via}…\x1b[0m\r\n`);
     let options: RouteOptions = {};
     for (;;) {
       try {
-        this.sessionId = await backend.connectSsh(host.id, options, this.term.cols, this.term.rows, this.onData, this.onExit, (network) =>
-          this.cb.onLatency({ network }),
+        this.sessionId = await backend.connectSsh(
+          host.id,
+          options,
+          this.term.cols,
+          this.term.rows,
+          this.onData,
+          this.onExit,
+          (network) => this.cb.onLatency({ network }),
+          exec?.exec,
+          exec?.parentSession,
         );
         this.cb.onSession(this.sessionId);
         return;
