@@ -9,11 +9,19 @@ npm install
 npm run tauri dev
 ```
 
-Build de release (gera instalador em `src-tauri/target/release/bundle`):
+## Versões e builds
 
-```powershell
-npm run tauri build
-```
+- **Windows** (`.msi` e `-setup.exe`): `npm run tauri build` no Windows; os instaladores ficam em
+  `src-tauri/target/release/bundle`.
+- **Linux** (`.deb`, `.rpm`, `.AppImage`): `docker/linux-build/build.sh` (no WSL ou num Linux com
+  Docker) compila o commit atual num Ubuntu 22.04 e põe os pacotes em `release/linux`. Rodam em
+  distros com glibc 2.35+ (Ubuntu 22.04, Debian 12, Fedora 36 em diante).
+- **GitHub**: `.github/workflows/release.yml` compila os dois numa tag `v*`
+  (`git tag v0.1.0 && git push origin v0.1.0`) e cria uma release em rascunho com os instaladores.
+
+A versão fica em `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` e `package.json`.
+Os instaladores não são assinados: o Windows SmartScreen avisa na primeira execução
+("Mais informações" → "Executar assim mesmo").
 
 Só a interface, no navegador (`npm run dev` e abrir http://localhost:1420): fora do Tauri, o
 `src/dev-mock.ts` simula o backend com dados de exemplo. `?view=credentials|tunnels|settings|session`,

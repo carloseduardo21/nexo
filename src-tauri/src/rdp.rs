@@ -95,6 +95,7 @@ impl RdpSession {
     }
 
     /// A sessão terminou (o laço dela não recebe mais comandos).
+    #[cfg_attr(not(windows), allow(dead_code))] // só o gancho de teclado (Windows) usa
     pub fn is_closed(&self) -> bool {
         self.commands.is_closed()
     }
