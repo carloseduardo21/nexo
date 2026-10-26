@@ -938,7 +938,7 @@ mod live {
             username: "nexo".into(),
             ..Default::default()
         };
-        let route = vec![(gateway_host, Secret { password: Some("nexo123".into()), passphrase: None })];
+        let route = vec![(gateway_host, Secret { password: Some("nexo123".into()), ..Default::default() })];
         let mut opts = Options::new();
         let conn = loop {
             match ssh::establish(&route, &opts).await {

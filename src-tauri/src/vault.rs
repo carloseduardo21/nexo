@@ -86,6 +86,21 @@ pub struct Host {
     pub protocol: Protocol,
     #[serde(default)]
     pub rdp: RdpSettings,
+    /// Credencial salva usada pelo host (usuário, método e segredos vêm dela); vazio = dados do próprio host.
+    #[serde(default)]
+    pub credential_id: String,
+}
+
+/// Credencial reutilizável (como as "identities" do Termius): vários hosts, SSH ou RDP, usam a mesma.
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Credential {
+    pub id: String,
+    pub label: String,
+    pub username: String,
+    pub auth: AuthMethod,
+    /// Arquivo da chave privada; vazio com chave importada (texto no cofre) ou para tentar as padrão.
+    pub key_path: String,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -93,6 +108,9 @@ pub struct Host {
 pub struct Secret {
     pub password: Option<String>,
     pub passphrase: Option<String>,
+    /// Chave privada (formato OpenSSH) guardada no próprio cofre: importada ou gerada pelo Nexo.
+    #[serde(default)]
+    pub private_key: Option<String>,
 }
 
 /// O que o frontend recebe: o host, mais se há segredo salvo (nunca o segredo em si).
@@ -105,10 +123,66 @@ pub struct HostView {
     pub has_passphrase: bool,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialView {
+    #[serde(flatten)]
+    pub credential: Credential,
+    pub has_password: bool,
+    pub has_passphrase: bool,
+    /// Chave privada guardada no cofre.
+    pub has_key: bool,
+    /// Chave pública (OpenSSH) da chave guardada, para copiar para o `authorized_keys`.
+    pub public_key: Option<String>,
+    /// Hosts que usam esta credencial.
+    pub used_by: Vec<String>,
+}
+
+/// Segredos novos de um formulário: None mantém o salvo, Some("") apaga, Some(x) troca.
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SecretUpdate {
+    pub password: Option<String>,
+    pub passphrase: Option<String>,
+    pub private_key: Option<String>,
+}
+
+impl SecretUpdate {
+    fn apply(self, secret: &mut Secret) {
+        let set = |slot: &mut Option<String>, value: Option<String>| {
+            if let Some(v) = value {
+                *slot = (!v.is_empty()).then_some(v);
+            }
+        };
+        set(&mut secret.password, self.password);
+        set(&mut secret.passphrase, self.passphrase);
+        set(&mut secret.private_key, self.private_key);
+    }
+}
+
+/// Arquivo de exportação: tudo menos os segredos (senhas e chaves ficam só no cofre desta máquina).
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Export {
+    pub version: u32,
+    pub hosts: Vec<Host>,
+    pub credentials: Vec<Credential>,
+    pub tunnels: Vec<Tunnel>,
+}
+
+impl Default for Export {
+    fn default() -> Self {
+        Self { version: 1, hosts: Vec::new(), credentials: Vec::new(), tunnels: Vec::new() }
+    }
+}
+
 #[derive(Default, Serialize, Deserialize)]
 struct VaultData {
     hosts: Vec<Host>,
+    /// Segredos por id de host ou de credencial (uuids: não colidem).
     secrets: HashMap<String, Secret>,
+    #[serde(default)]
+    credentials: Vec<Credential>,
     #[serde(default)]
     tunnels: Vec<Tunnel>,
     /// Certificados TLS de servidores RDP confiados: "host:porta" → SHA-256 (como o known_hosts do SSH).
@@ -141,20 +215,87 @@ impl Vault {
         data.hosts
             .iter()
             .map(|h| {
-                let secret = data.secrets.get(&h.id);
-                HostView {
-                    host: h.clone(),
+                let (_, secret) = effective(&data, h);
+                HostView { host: h.clone(), has_password: secret.password.is_some(), has_passphrase: secret.passphrase.is_some() }
+            })
+            .collect()
+    }
+
+    /// O host com usuário, método e segredos já resolvidos (da credencial, se tiver uma).
+    pub fn host(&self, id: &str) -> Option<(Host, Secret)> {
+        let data = self.data.lock().unwrap();
+        let host = data.hosts.iter().find(|h| h.id == id)?;
+        Some(effective(&data, host))
+    }
+
+    // ---------- Credenciais ----------
+
+    pub fn credentials(&self) -> Vec<CredentialView> {
+        let data = self.data.lock().unwrap();
+        data.credentials
+            .iter()
+            .map(|c| {
+                let secret = data.secrets.get(&c.id);
+                let key = secret.and_then(|s| s.private_key.as_deref());
+                CredentialView {
+                    credential: c.clone(),
                     has_password: secret.is_some_and(|s| s.password.is_some()),
                     has_passphrase: secret.is_some_and(|s| s.passphrase.is_some()),
+                    has_key: key.is_some(),
+                    public_key: key.and_then(public_key_of),
+                    used_by: data.hosts.iter().filter(|h| h.credential_id == c.id).map(|h| h.label.clone()).collect(),
                 }
             })
             .collect()
     }
 
-    pub fn host(&self, id: &str) -> Option<(Host, Secret)> {
-        let data = self.data.lock().unwrap();
-        let host = data.hosts.iter().find(|h| h.id == id)?.clone();
-        Some((host, data.secrets.get(id).cloned().unwrap_or_default()))
+    pub fn save_credential(&self, mut credential: Credential, secrets: SecretUpdate) -> Result<Credential, String> {
+        if let Some(key) = secrets.private_key.as_deref().filter(|k| !k.is_empty()) {
+            // Confere o formato já ao salvar (a passphrase só é exigida ao conectar).
+            russh::keys::PrivateKey::from_openssh(key.trim()).map_err(|e| format!("chave privada inválida: {e}"))?;
+        }
+        let mut data = self.data.lock().unwrap();
+        if credential.id.is_empty() {
+            credential.id = uuid::Uuid::new_v4().to_string();
+        }
+        match data.credentials.iter_mut().find(|c| c.id == credential.id) {
+            Some(existing) => *existing = credential.clone(),
+            None => data.credentials.push(credential.clone()),
+        }
+        secrets.apply(data.secrets.entry(credential.id.clone()).or_default());
+        self.persist(&data)?;
+        Ok(credential)
+    }
+
+    /// Exclui a credencial. Os hosts que a usavam ficam com o usuário dela e passam a pedir a senha ao conectar.
+    pub fn delete_credential(&self, id: &str) -> Result<(), String> {
+        let mut data = self.data.lock().unwrap();
+        let Some(credential) = data.credentials.iter().find(|c| c.id == id).cloned() else { return Ok(()) };
+        for host in data.hosts.iter_mut().filter(|h| h.credential_id == id) {
+            host.credential_id.clear();
+            if host.username.is_empty() {
+                host.username = credential.username.clone();
+            }
+            if host.protocol == Protocol::Ssh {
+                host.auth = if credential.auth == AuthMethod::Key && credential.key_path.is_empty() { AuthMethod::Password } else { credential.auth.clone() };
+                host.key_path = credential.key_path.clone();
+            }
+        }
+        data.credentials.retain(|c| c.id != id);
+        data.secrets.remove(id);
+        self.persist(&data)
+    }
+
+    /// Gera um par de chaves ed25519 numa credencial nova; devolve a credencial (com a chave pública).
+    pub fn generate_key_credential(&self, label: String, username: String) -> Result<CredentialView, String> {
+        let seed: [u8; 32] = new_key().try_into().map_err(|_| "falha ao gerar chave")?;
+        let keypair = russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&seed);
+        let mut key = russh::keys::PrivateKey::from(keypair);
+        key.set_comment(format!("{username}@nexo"));
+        let pem = key.to_openssh(russh::keys::ssh_key::LineEnding::LF).map_err(|e| e.to_string())?;
+        let credential = Credential { label, username, auth: AuthMethod::Key, ..Default::default() };
+        let saved = self.save_credential(credential, SecretUpdate { private_key: Some(pem.to_string()), ..Default::default() })?;
+        self.credentials().into_iter().find(|c| c.credential.id == saved.id).ok_or_else(|| "credencial não encontrada".into())
     }
 
     /// Caminho até o host: os jump hosts (do primeiro ao último) e o próprio host.
@@ -167,6 +308,9 @@ impl Vault {
         let mut data = self.data.lock().unwrap();
         if host.id.is_empty() {
             host.id = uuid::Uuid::new_v4().to_string();
+        }
+        if !host.credential_id.is_empty() && !data.credentials.iter().any(|c| c.id == host.credential_id) {
+            return Err("a credencial escolhida não existe mais".into());
         }
         let previous = match data.hosts.iter_mut().find(|h| h.id == host.id) {
             Some(existing) => Some(std::mem::replace(existing, host.clone())),
@@ -194,9 +338,15 @@ impl Vault {
         Ok(host)
     }
 
+    /// Atualiza o segredo de um host; se ele usa uma credencial, o segredo é o da credencial.
     pub fn update_secret(&self, id: &str, update: impl FnOnce(&mut Secret)) -> Result<(), String> {
         let mut data = self.data.lock().unwrap();
-        update(data.secrets.entry(id.to_string()).or_default());
+        let owner = data
+            .hosts
+            .iter()
+            .find(|h| h.id == id && !h.credential_id.is_empty() && data.credentials.iter().any(|c| c.id == h.credential_id))
+            .map_or_else(|| id.to_string(), |h| h.credential_id.clone());
+        update(data.secrets.entry(owner).or_default());
         self.persist(&data)
     }
 
@@ -217,6 +367,65 @@ impl Vault {
         data.secrets.remove(id);
         data.tunnels.retain(|t| t.host_id != id);
         self.persist(&data)
+    }
+
+    /// Hosts, credenciais (sem segredos) e túneis, para exportar.
+    pub fn export(&self) -> Export {
+        let data = self.data.lock().unwrap();
+        Export { version: 1, hosts: data.hosts.clone(), credentials: data.credentials.clone(), tunnels: data.tunnels.clone() }
+    }
+
+    /// Importa um arquivo exportado. Ids repetidos ganham ids novos (e as referências entre hosts,
+    /// credenciais e túneis acompanham). Devolve quantos hosts entraram.
+    pub fn import(&self, export: Export) -> Result<usize, String> {
+        let mut data = self.data.lock().unwrap();
+        let mut remap: HashMap<String, String> = HashMap::new();
+        let taken = |data: &VaultData, id: &str| {
+            data.hosts.iter().any(|h| h.id == id) || data.credentials.iter().any(|c| c.id == id) || data.tunnels.iter().any(|t| t.id == id)
+        };
+        let mut fresh = |data: &VaultData, id: &str| -> String {
+            let new = if id.is_empty() || taken(data, id) { uuid::Uuid::new_v4().to_string() } else { id.to_string() };
+            remap.insert(id.to_string(), new.clone());
+            new
+        };
+        let mut credentials = export.credentials;
+        for c in &mut credentials {
+            c.id = fresh(&data, &c.id);
+        }
+        let mut hosts = export.hosts;
+        for h in &mut hosts {
+            h.id = fresh(&data, &h.id);
+        }
+        let mut tunnels = export.tunnels;
+        for t in &mut tunnels {
+            t.id = fresh(&data, &t.id);
+        }
+        let map = |id: &str| if id.is_empty() { String::new() } else { remap.get(id).cloned().unwrap_or_else(|| id.to_string()) };
+        for h in &mut hosts {
+            h.jump_host_id = map(&h.jump_host_id);
+            h.credential_id = map(&h.credential_id);
+        }
+        for t in &mut tunnels {
+            t.host_id = map(&t.host_id);
+        }
+        let count = hosts.len();
+        data.credentials.extend(credentials);
+        data.hosts.extend(hosts);
+        data.tunnels.extend(tunnels.into_iter().filter(|t| !t.host_id.is_empty()));
+        // Referências que não existem (arquivo editado à mão) não podem quebrar o cofre.
+        let host_ids: Vec<String> = data.hosts.iter().map(|h| h.id.clone()).collect();
+        let credential_ids: Vec<String> = data.credentials.iter().map(|c| c.id.clone()).collect();
+        for h in &mut data.hosts {
+            if !h.jump_host_id.is_empty() && !host_ids.contains(&h.jump_host_id) {
+                h.jump_host_id.clear();
+            }
+            if !h.credential_id.is_empty() && !credential_ids.contains(&h.credential_id) {
+                h.credential_id.clear();
+            }
+        }
+        data.tunnels.retain(|t| host_ids.contains(&t.host_id));
+        self.persist(&data)?;
+        Ok(count)
     }
 
     pub fn rdp_cert(&self, endpoint: &str) -> Option<String> {
@@ -289,7 +498,7 @@ fn route_in(data: &VaultData, id: &str) -> Result<Route, String> {
         if !route.is_empty() && host.protocol != Protocol::Ssh {
             return Err(format!("o jump host \"{}\" não é um host SSH", host.label));
         }
-        route.push((host.clone(), data.secrets.get(&host.id).cloned().unwrap_or_default()));
+        route.push(effective(data, host));
         if host.jump_host_id.is_empty() {
             break;
         }
@@ -297,6 +506,30 @@ fn route_in(data: &VaultData, id: &str) -> Result<Route, String> {
     }
     route.reverse();
     Ok(route)
+}
+
+/// Host pronto para conectar: com credencial, o usuário, o método, a chave e os segredos vêm dela
+/// (o id continua o do host, para os erros e os prompts apontarem o host certo).
+fn effective(data: &VaultData, host: &Host) -> (Host, Secret) {
+    let credential = (!host.credential_id.is_empty()).then(|| data.credentials.iter().find(|c| c.id == host.credential_id)).flatten();
+    match credential {
+        Some(c) => {
+            let mut host = host.clone();
+            if !c.username.is_empty() {
+                host.username = c.username.clone();
+            }
+            host.auth = c.auth.clone();
+            host.key_path = c.key_path.clone();
+            (host, data.secrets.get(&c.id).cloned().unwrap_or_default())
+        }
+        None => (host.clone(), data.secrets.get(&host.id).cloned().unwrap_or_default()),
+    }
+}
+
+/// Chave pública (linha do `authorized_keys`) de uma chave privada OpenSSH.
+fn public_key_of(private_key: &str) -> Option<String> {
+    let key = russh::keys::PrivateKey::from_openssh(private_key.trim()).ok()?;
+    key.public_key().to_openssh().ok()
 }
 
 fn decrypt(cipher: &XChaCha20Poly1305, bytes: &[u8]) -> Result<VaultData, String> {
@@ -346,4 +579,97 @@ fn load_or_create_key(dir: &Path) -> Result<Vec<u8>, String> {
 
 fn new_key() -> Vec<u8> {
     Key::<XChaCha20Poly1305>::generate().to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Cofre num diretório temporário, com chave aleatória (sem tocar no keyring do sistema).
+    fn vault() -> Vault {
+        let dir = std::env::temp_dir().join(format!("nexo-vault-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cipher = XChaCha20Poly1305::new_from_slice(&new_key()).unwrap();
+        Vault { path: dir.join("vault.bin"), cipher, data: Mutex::new(VaultData::default()) }
+    }
+
+    fn host(label: &str) -> Host {
+        Host { label: label.into(), hostname: format!("{label}.lan"), port: 22, username: "local".into(), ..Default::default() }
+    }
+
+    #[test]
+    fn hosts_use_the_credential() {
+        let v = vault();
+        let cred = v
+            .save_credential(
+                Credential { label: "prod".into(), username: "deploy".into(), auth: AuthMethod::Password, ..Default::default() },
+                SecretUpdate { password: Some("s3nha".into()), ..Default::default() },
+            )
+            .unwrap();
+        let web = v.save_host(Host { credential_id: cred.id.clone(), ..host("web") }, None, None).unwrap();
+        let rdp = v.save_host(Host { credential_id: cred.id.clone(), protocol: Protocol::Rdp, port: 3389, ..host("desk") }, None, None).unwrap();
+
+        for id in [&web.id, &rdp.id] {
+            let (h, s) = v.host(id).unwrap();
+            assert_eq!(h.username, "deploy");
+            assert_eq!(s.password.as_deref(), Some("s3nha"));
+            assert_eq!(&h.id, id, "o id continua o do host");
+        }
+        assert!(v.hosts().iter().all(|h| h.has_password));
+        assert_eq!(v.credentials()[0].used_by.len(), 2);
+
+        // Senha lembrada num prompt vai para a credencial (vale para todos os hosts dela).
+        v.update_secret(&web.id, |s| s.password = Some("nova".into())).unwrap();
+        assert_eq!(v.host(&rdp.id).unwrap().1.password.as_deref(), Some("nova"));
+    }
+
+    #[test]
+    fn deleting_a_credential_keeps_the_hosts() {
+        let v = vault();
+        let cred = v
+            .save_credential(Credential { label: "c".into(), username: "ana".into(), ..Default::default() }, SecretUpdate::default())
+            .unwrap();
+        let h = v.save_host(Host { credential_id: cred.id.clone(), username: String::new(), ..host("a") }, None, None).unwrap();
+        v.delete_credential(&cred.id).unwrap();
+        let (host, secret) = v.host(&h.id).unwrap();
+        assert!(host.credential_id.is_empty());
+        assert_eq!(host.username, "ana");
+        assert!(secret.password.is_none());
+        assert!(v.credentials().is_empty());
+    }
+
+    #[test]
+    fn generated_key_is_usable() {
+        let v = vault();
+        let view = v.generate_key_credential("minha chave".into(), "ana".into()).unwrap();
+        assert!(view.has_key);
+        assert!(view.public_key.as_deref().unwrap().starts_with("ssh-ed25519 "));
+        let (_, secret) = {
+            let h = v.save_host(Host { credential_id: view.credential.id.clone(), ..host("k") }, None, None).unwrap();
+            v.host(&h.id).unwrap()
+        };
+        russh::keys::decode_secret_key(secret.private_key.as_deref().unwrap(), None).unwrap();
+        assert!(v.save_credential(Credential::default(), SecretUpdate { private_key: Some("lixo".into()), ..Default::default() }).is_err());
+    }
+
+    #[test]
+    fn import_remaps_ids() {
+        let v = vault();
+        let cred = v.save_credential(Credential { label: "c".into(), ..Default::default() }, SecretUpdate::default()).unwrap();
+        let jump = v.save_host(host("jump"), None, None).unwrap();
+        v.save_host(Host { jump_host_id: jump.id.clone(), credential_id: cred.id.clone(), ..host("inner") }, None, None).unwrap();
+
+        // Importar o próprio export duplica tudo com ids novos, mantendo as ligações.
+        let count = v.import(v.export()).unwrap();
+        assert_eq!(count, 2);
+        let hosts = v.hosts();
+        assert_eq!(hosts.len(), 4);
+        let inner: Vec<_> = hosts.iter().filter(|h| h.host.label == "inner").collect();
+        assert_ne!(inner[0].host.jump_host_id, inner[1].host.jump_host_id);
+        assert_ne!(inner[0].host.credential_id, inner[1].host.credential_id);
+        for h in inner {
+            assert!(v.route(&h.host.id).is_ok());
+            assert!(v.credentials().iter().any(|c| c.credential.id == h.host.credential_id));
+        }
+    }
 }

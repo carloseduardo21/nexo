@@ -457,10 +457,27 @@ async fn authenticate(
             }
         }
         AuthMethod::Key => {
-            let explicit = !host.key_path.trim().is_empty();
-            let paths = if explicit { vec![expand_home(&host.key_path)] } else { default_keys() };
             let passphrase = opts.passphrase.clone().or_else(|| secret.passphrase.clone());
             let rsa_hash = handle.best_supported_rsa_hash().await.ok().flatten().flatten();
+            // Chave guardada no cofre (importada ou gerada pelo Nexo): só ela é tentada.
+            if let Some(pem) = &secret.private_key {
+                const VAULT_KEY: &str = "chave guardada no cofre";
+                let key = match keys::decode_secret_key(pem.trim(), passphrase.as_deref()) {
+                    Ok(key) => key,
+                    Err(keys::Error::KeyIsEncrypted) => return Err(ConnectError::NeedPassphrase { key_path: VAULT_KEY.into() }),
+                    Err(e) if passphrase.is_some() && is_bad_passphrase(&e) => {
+                        return Err(ConnectError::NeedPassphrase { key_path: VAULT_KEY.into() });
+                    }
+                    Err(e) => return Err(ConnectError::other(format!("{VAULT_KEY}: {e}"))),
+                };
+                let key = PrivateKeyWithHashAlg::new(Arc::new(key), rsa_hash);
+                if handle.authenticate_publickey(user, key).await.map_err(ConnectError::other)?.success() {
+                    return Ok(());
+                }
+                return Err(ConnectError::AuthFailed { message: format!("chave recusada para {user}@{}", host.hostname) });
+            }
+            let explicit = !host.key_path.trim().is_empty();
+            let paths = if explicit { vec![expand_home(&host.key_path)] } else { default_keys() };
             for path in &paths {
                 let key = match keys::load_secret_key(path, passphrase.as_deref()) {
                     Ok(key) => key,
@@ -578,3 +595,44 @@ fn default_keys() -> Vec<PathBuf> {
     ["id_ed25519", "id_ecdsa", "id_rsa"].iter().map(|n| ssh.join(n)).filter(|p| p.is_file()).collect()
 }
 
+
+/// Contra o container openssh dos outros testes (porta 2222 ou `NEXO_SSH_PORT`):
+/// `cargo test -- --ignored live_vault_key`.
+#[cfg(test)]
+mod live {
+    use super::*;
+
+    /// Chave gerada e guardada no cofre (sem arquivo): a pública vai para o `authorized_keys` do container.
+    #[tokio::test]
+    #[ignore]
+    async fn live_vault_key() {
+        let seed: [u8; 32] = std::array::from_fn(|i| (i as u8).wrapping_mul(97).wrapping_add(13));
+        let key = keys::PrivateKey::from(keys::ssh_key::private::Ed25519Keypair::from_seed(&seed));
+        let public = key.public_key().to_openssh().unwrap();
+        let script = format!("grep -qF '{public}' /config/.ssh/authorized_keys 2>/dev/null || echo '{public}' >> /config/.ssh/authorized_keys");
+        let ok = std::process::Command::new("wsl").args(["docker", "exec", "nexo-ssh", "sh", "-c", &script]).status().unwrap();
+        assert!(ok.success(), "não foi possível instalar a chave no container");
+
+        let host = Host {
+            id: "k".into(),
+            hostname: "127.0.0.1".into(),
+            port: std::env::var("NEXO_SSH_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(2222),
+            username: "nexo".into(),
+            auth: AuthMethod::Key,
+            ..Default::default()
+        };
+        let secret = Secret { private_key: Some(key.to_openssh(keys::ssh_key::LineEnding::LF).unwrap().to_string()), ..Default::default() };
+        let route = vec![(host, secret)];
+        let mut opts = Options::new();
+        let conn = loop {
+            match establish(&route, &opts).await {
+                Ok(conn) => break conn,
+                Err(Failure { host_id, error: ConnectError::UnknownHost { fingerprint, .. } }) => {
+                    opts.insert(host_id, ConnectOptions { trust_fingerprint: Some(fingerprint), ..Default::default() });
+                }
+                Err(e) => panic!("{:?}", e.error),
+            }
+        };
+        conn.close().await;
+    }
+}

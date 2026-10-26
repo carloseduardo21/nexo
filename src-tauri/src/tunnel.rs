@@ -382,7 +382,7 @@ mod live {
             key_path: String::new(),
             ..Default::default()
         };
-        (host, Secret { password: Some("nexo123".into()), passphrase: None })
+        (host, Secret { password: Some("nexo123".into()), ..Default::default() })
     }
 
     async fn establish(route: Route) -> Connection {

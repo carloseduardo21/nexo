@@ -20,7 +20,7 @@ use crate::shells::{self, ShellProfile};
 use crate::ssh::{self, Failure, Options};
 use crate::sshconfig;
 use crate::tunnel::{self, Tunnel, Tunnels};
-use crate::vault::{Host, HostView, Vault};
+use crate::vault::{Credential, CredentialView, Export, Host, HostView, SecretUpdate, Vault};
 
 #[tauri::command]
 pub async fn list_shells() -> Vec<ShellProfile> {
@@ -171,6 +171,71 @@ fn config_path(path: Option<String>) -> Result<PathBuf, String> {
 #[tauri::command]
 pub fn host_delete(vault: State<'_, Vault>, id: String) -> Result<(), String> {
     vault.delete_host(&id)
+}
+
+// ---------- Credenciais ----------
+
+#[tauri::command]
+pub fn credentials_list(vault: State<'_, Vault>) -> Vec<CredentialView> {
+    vault.credentials()
+}
+
+#[tauri::command]
+pub fn credential_save(vault: State<'_, Vault>, credential: Credential, secrets: SecretUpdate) -> Result<Credential, String> {
+    vault.save_credential(credential, secrets)
+}
+
+#[tauri::command]
+pub fn credential_delete(vault: State<'_, Vault>, id: String) -> Result<(), String> {
+    vault.delete_credential(&id)
+}
+
+/// Gera um par de chaves ed25519 guardado no cofre, numa credencial nova.
+#[tauri::command]
+pub fn credential_generate_key(vault: State<'_, Vault>, label: String, username: String) -> Result<CredentialView, String> {
+    vault.generate_key_credential(label, username)
+}
+
+// ---------- Exportar / importar ----------
+
+/// Grava hosts, credenciais (sem segredos) e túneis num arquivo JSON.
+#[tauri::command]
+pub fn vault_export(vault: State<'_, Vault>, path: String) -> Result<usize, String> {
+    let export = vault.export();
+    let json = serde_json::to_vec_pretty(&export).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| format!("{path}: {e}"))?;
+    Ok(export.hosts.len())
+}
+
+/// Lê um arquivo exportado pelo Nexo e acrescenta o conteúdo. Devolve quantos hosts entraram.
+#[tauri::command]
+pub fn vault_import(vault: State<'_, Vault>, path: String) -> Result<usize, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+    let export: Export = serde_json::from_slice(&bytes).map_err(|e| format!("arquivo inválido: {e}"))?;
+    vault.import(export)
+}
+
+// ---------- Configurações ----------
+
+fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("settings.json"))
+}
+
+/// Preferências do app (tema, fonte…): JSON livre, quem conhece o formato é o frontend.
+#[tauri::command]
+pub fn settings_get(app: AppHandle) -> serde_json::Value {
+    settings_path(&app)
+        .ok()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or(serde_json::Value::Null)
+}
+
+#[tauri::command]
+pub fn settings_set(app: AppHandle, settings: serde_json::Value) -> Result<(), String> {
+    let path = settings_path(&app)?;
+    let json = serde_json::to_vec_pretty(&settings).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())
 }
 
 /// Um único comando para input normal e broadcast: o frontend manda a lista de destinos.
