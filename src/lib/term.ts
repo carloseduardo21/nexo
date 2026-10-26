@@ -106,6 +106,7 @@ export class TermPane {
 
   private fitAddon = new FitAddon();
   private opened = false;
+  private hidden = false;
   private started = false;
   private unacked = 0;
   private probeStart = 0;
@@ -265,7 +266,17 @@ export class TermPane {
   }
 
   fit() {
-    if (!this.opened || this.host.clientWidth === 0 || this.host.clientHeight === 0) return;
+    if (!this.opened) return;
+    if (this.host.clientWidth === 0 || this.host.clientHeight === 0) {
+      this.hidden = true;
+      return;
+    }
+    if (this.hidden) {
+      // Voltou a aparecer (outra página/aba). O WebKitGTK (Linux) descarta o canvas WebGL de
+      // elementos escondidos: sem redesenhar, o terminal fica preto até o próximo evento.
+      this.hidden = false;
+      this.term.refresh(0, this.term.rows - 1);
+    }
     const { cols, rows } = this.term;
     this.fitAddon.fit();
     if (this.sessionId !== null && (cols !== this.term.cols || rows !== this.term.rows)) {
