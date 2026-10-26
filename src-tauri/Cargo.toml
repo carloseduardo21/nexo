@@ -1,0 +1,42 @@
+[package]
+name = "nexo"
+version = "0.1.0"
+description = "Nexo — terminal SSH/RDP rápido e multiplataforma"
+edition = "2021"
+
+[lib]
+name = "nexo_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+portable-pty = "0.9"
+# `ring` em vez de `aws-lc-rs`: compila no Windows sem precisar de CMake/NASM.
+russh = { version = "0.64.1", default-features = false, features = ["ring", "rsa", "flate2"] }
+russh-sftp = "3.0.1"
+tokio = { version = "1.54.1", features = ["net", "sync", "time", "io-util", "macros", "fs"] }
+tauri-plugin-dialog = "2.8.3"
+tauri-plugin-opener = "2.7.2"
+keyring = "4.2.0"
+chacha20poly1305 = "0.11.0"
+uuid = { version = "1.29.0", features = ["v4"] }
+
+# Dependências (russh, crypto, tokio) otimizadas mesmo no `tauri dev`: o primeiro build
+# demora mais, mas o app em desenvolvimento fica com o desempenho real.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros"] }
