@@ -131,28 +131,30 @@
   <Dialog.Root open {onOpenChange}>
     <Dialog.Content class="sm:max-w-sm">
       <Dialog.Header>
-        <Dialog.Title>{d.field === 'password' ? 'Senha' : 'Passphrase da chave'}</Dialog.Title>
-        <Dialog.Description>{d.field === 'password' ? `${d.host.username}@${d.host.hostname}` : d.keyPath}</Dialog.Description>
+        <Dialog.Title>{d.title ?? (d.field === 'password' ? 'Senha' : 'Passphrase da chave')}</Dialog.Title>
+        <Dialog.Description>{d.description ?? (d.field === 'password' ? `${d.host.username}@${d.host.hostname}` : d.keyPath)}</Dialog.Description>
       </Dialog.Header>
       <form
         id="secret-form"
         class="grid gap-3"
         onsubmit={(e) => {
           e.preventDefault();
-          closeDialog({ value: secret, remember });
+          closeDialog({ value: secret, remember: remember && !d.noRemember });
         }}>
         {#if d.error}<p class="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{d.error}</p>{/if}
         <!-- svelte-ignore a11y_autofocus -->
         <Input type="password" bind:value={secret} autofocus autocomplete="off" />
-        <label class="flex items-center gap-2 text-sm">
-          <Checkbox checked={remember} onCheckedChange={(v) => (remember = v === true)} />
-          <LockIcon class="size-3.5 text-muted-foreground" />
-          Salvar no cofre{d.host.credentialId ? ' (na credencial)' : ''}
-        </label>
+        {#if !d.noRemember}
+          <label class="flex items-center gap-2 text-sm">
+            <Checkbox checked={remember} onCheckedChange={(v) => (remember = v === true)} />
+            <LockIcon class="size-3.5 text-muted-foreground" />
+            Salvar no cofre{d.host.credentialId ? ' (na credencial)' : ''}
+          </label>
+        {/if}
       </form>
       <Dialog.Footer>
         <Button variant="outline" onclick={() => closeDialog(null)}>Cancelar</Button>
-        <Button type="submit" form="secret-form">Conectar</Button>
+        <Button type="submit" form="secret-form">{d.confirm ?? 'Conectar'}</Button>
       </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>

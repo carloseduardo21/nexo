@@ -32,6 +32,7 @@
     jumpHostId: initial?.jumpHostId ?? '',
     protocol: initial?.protocol ?? ('ssh' as Protocol),
     credentialId: initial?.credentialId ?? '',
+    dockerSudo: initial?.dockerSudo ?? false,
   });
   let rdp = $state({ domain: '', width: 0, height: 0, hidpi: false, clipboard: true, captureKeys: true, gfx: true, ...initial?.rdp });
   let resolution = $state(rdp.width && rdp.height ? `${rdp.width}x${rdp.height}` : 'fit');
@@ -283,6 +284,16 @@
           {/each}
         </select>
       </div>
+
+      {#if form.protocol === 'ssh'}
+        <label class="flex items-start justify-between gap-4">
+          <span class="grid gap-0.5">
+            <span class="text-sm">Docker com sudo</span>
+            <span class="text-xs text-muted-foreground">Para usuários fora do grupo docker: o painel de containers roda <code>sudo docker</code>.</span>
+          </span>
+          <Switch checked={form.dockerSudo} onCheckedChange={(v) => (form.dockerSudo = v)} />
+        </label>
+      {/if}
 
       {#if form.protocol === 'rdp'}
         <Separator />

@@ -129,33 +129,75 @@ pub fn action_command(id: &str, action: Action) -> String {
     format!("docker {} {id}", action.verb())
 }
 
-/// Comando para acompanhar os logs num terminal.
-pub fn logs_command(id: &str) -> String {
-    format!("docker logs -f --tail 500 {id}")
+/// Comando para acompanhar os logs num terminal. Com `sudo`, o prompt de senha aparece no
+/// próprio terminal (e o Nexo sugere a senha salva, como em qualquer prompt).
+pub fn logs_command(id: &str, sudo: bool) -> String {
+    format!("{}docker logs -f --tail 500 {id}", if sudo { "sudo " } else { "" })
 }
 
 /// Shell interativo no container: bash se houver, senão sh.
-pub fn shell_command(id: &str) -> String {
-    format!("docker exec -it {id} sh -c 'command -v bash >/dev/null && exec bash || exec sh'")
+pub fn shell_command(id: &str, sudo: bool) -> String {
+    format!("{}docker exec -it {id} sh -c 'command -v bash >/dev/null && exec bash || exec sh'", if sudo { "sudo " } else { "" })
 }
 
-/// Mensagem amigável para erros do `docker` (permissão é o caso comum).
-pub fn describe_error(status: Option<u32>, stderr: &str) -> String {
-    if status == Some(4) {
-        return "o Docker não está instalado neste servidor".into();
+/// Como rodar o comando: direto, ou via `sudo` com a senha na entrada (`-S`) — ou sem senha
+/// (`-n`: falha na hora se o sudo pedir uma, em vez de travar esperando).
+pub fn with_sudo(script: &str, sudo: bool, has_password: bool) -> String {
+    match (sudo, has_password) {
+        (false, _) => script.to_string(),
+        (true, true) => format!("sudo -S -p '' sh -c {}", shell_quote(script)),
+        (true, false) => format!("sudo -n sh -c {}", shell_quote(script)),
     }
+}
+
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// Erros que o painel trata: pedir a senha do sudo, oferecer o sudo.
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Error {
+    /// Usuário fora do grupo docker: dá para tentar com sudo.
+    Permission { message: String },
+    /// O sudo pediu senha e não havia uma (ou ela estava errada).
+    NeedSudoPassword { wrong: bool },
+    Other { message: String },
+}
+
+impl Error {
+    pub fn other(message: impl Into<String>) -> Self {
+        Self::Other { message: message.into() }
+    }
+}
+
+/// Classifica o erro do `docker` (ou do `sudo` antes dele).
+pub fn describe_error(status: Option<u32>, stderr: &str) -> Error {
     let lower = stderr.to_lowercase();
+    if lower.contains("a password is required") || lower.contains("a terminal is required") {
+        return Error::NeedSudoPassword { wrong: false };
+    }
+    if lower.contains("incorrect password") || lower.contains("sorry, try again") {
+        return Error::NeedSudoPassword { wrong: true };
+    }
+    if lower.contains("not in the sudoers") || lower.contains("is not allowed to") {
+        return Error::other("o usuário não tem permissão para usar sudo neste servidor");
+    }
+    if lower.contains("sudo: command not found") || lower.contains("sudo: not found") {
+        return Error::other("o sudo não está instalado neste servidor");
+    }
+    if status == Some(4) {
+        return Error::other("o Docker não está instalado neste servidor");
+    }
     if lower.contains("permission denied") && lower.contains("docker") {
-        return "sem permissão para usar o Docker: adicione o usuário ao grupo docker \
-                (sudo usermod -aG docker $USER) e reconecte"
-            .into();
+        return Error::Permission { message: "sem permissão para usar o Docker (o usuário não está no grupo docker)".into() };
     }
     // "Cannot connect to the Docker daemon" (até o 28) / "failed to connect to the docker API" (29+).
     if lower.contains("connect to the docker daemon") || lower.contains("failed to connect to the docker api") {
-        return "o serviço do Docker não está rodando no servidor".into();
+        return Error::other("o serviço do Docker não está rodando no servidor");
     }
     let first = stderr.lines().find(|l| !l.trim().is_empty()).unwrap_or("o comando docker falhou");
-    first.trim_start_matches("Error response from daemon: ").to_string()
+    Error::other(first.trim_start_matches("Error response from daemon: "))
 }
 
 #[cfg(test)]
@@ -205,14 +247,35 @@ mod tests {
         assert!(!valid_id("5ba971043517; rm -rf /"));
     }
 
+    fn message(e: Error) -> String {
+        match e {
+            Error::Permission { message } | Error::Other { message } => message,
+            other => panic!("{other:?}"),
+        }
+    }
+
     #[test]
     fn friendly_errors() {
         let denied = "permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock";
-        assert!(describe_error(Some(1), denied).contains("grupo docker"));
-        assert!(describe_error(Some(4), "").contains("não está instalado"));
+        assert!(matches!(describe_error(Some(1), denied), Error::Permission { .. }));
+        assert!(message(describe_error(Some(4), "")).contains("não está instalado"));
         let down = "failed to connect to the docker API at unix:///var/run/docker.sock; check if the path is correct and if the daemon is running";
-        assert!(describe_error(Some(5), down).contains("não está rodando"));
-        assert_eq!(describe_error(Some(1), "Error response from daemon: conflict: container is running"), "conflict: container is running");
+        assert!(message(describe_error(Some(5), down)).contains("não está rodando"));
+        assert_eq!(message(describe_error(Some(1), "Error response from daemon: conflict: container is running")), "conflict: container is running");
+    }
+
+    #[test]
+    fn sudo_errors() {
+        assert_eq!(describe_error(Some(1), "sudo: a password is required"), Error::NeedSudoPassword { wrong: false });
+        assert_eq!(describe_error(Some(1), "Sorry, try again.\nsudo: 1 incorrect password attempt"), Error::NeedSudoPassword { wrong: true });
+        assert!(message(describe_error(Some(1), "carlos is not in the sudoers file.")).contains("permissão para usar sudo"));
+    }
+
+    #[test]
+    fn sudo_wraps_the_whole_script() {
+        assert_eq!(with_sudo("docker ps", false, true), "docker ps");
+        assert_eq!(with_sudo("echo 'a'", true, true), r"sudo -S -p '' sh -c 'echo '\''a'\'''");
+        assert!(with_sudo("docker ps", true, false).starts_with("sudo -n sh -c "));
     }
 }
 
@@ -234,5 +297,38 @@ mod live {
         assert!(!list.is_empty(), "nenhum container no Docker do WSL");
         assert!(list.iter().all(|c| valid_id(&c.id)));
         assert!(list.iter().filter(|c| c.state == "running").all(|c| c.cpu.is_some() && !c.mem_usage.is_empty()));
+    }
+
+    /// O script passa inteiro pelo `sh -c '…'` do sudo (aspas simples dentro dele escapadas).
+    #[test]
+    #[ignore]
+    fn live_docker_list_quoted() {
+        let quoted = format!("sh -c {}", shell_quote(LIST_SCRIPT));
+        let out = std::process::Command::new("wsl").args(["bash", "-c", &quoted]).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(!parse_list(&String::from_utf8_lossy(&out.stdout)).is_empty());
+    }
+
+    /// Senha do sudo pela entrada, contra o container SSH dos outros testes (porta 2222 ou
+    /// `NEXO_SSH_PORT`). Lá o `nexo` não está no sudoers: com a senha certa, o sudo aceita a
+    /// senha e recusa o comando — o que prova que ela chegou.
+    #[tokio::test]
+    #[ignore]
+    async fn live_sudo_password() {
+        let conn = crate::hostinfo::live::connect("NEXO_SSH_PORT", 2222).await;
+        let run = |password: Option<&'static str>| {
+            let conn = &conn;
+            async move {
+                let command = with_sudo("id -u", true, password.is_some());
+                let input = password.map(|p| format!("{p}\n"));
+                let out = conn.run_with_input(&command, input.as_deref().map(str::as_bytes)).await.unwrap();
+                describe_error(out.status, &out.stderr())
+            }
+        };
+        assert_eq!(run(None).await, Error::NeedSudoPassword { wrong: false });
+        assert_eq!(run(Some("errada")).await, Error::NeedSudoPassword { wrong: true });
+        let Error::Other { message } = run(Some("nexo123")).await else { panic!("esperava recusa do sudoers") };
+        assert!(message.contains("permissão para usar sudo"), "{message}");
+        conn.close().await;
     }
 }

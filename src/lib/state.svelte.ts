@@ -48,7 +48,19 @@ export type Dialog =
   | { type: 'hostForm'; host: HostView | null }
   | { type: 'hostKey'; host: HostView; fingerprint: string; keyType: string }
   | { type: 'certChanged'; host: HostView; fingerprint: string }
-  | { type: 'secret'; host: HostView; field: 'password' | 'passphrase'; keyPath?: string; error?: string }
+  | {
+      type: 'secret';
+      host: HostView;
+      field: 'password' | 'passphrase';
+      keyPath?: string;
+      error?: string;
+      /** Textos próprios (ex.: senha do sudo); o padrão é o do login. */
+      title?: string;
+      description?: string;
+      confirm?: string;
+      /** Sem a opção de salvar no cofre. */
+      noRemember?: boolean;
+    }
   | { type: 'prompt'; title: string; label: string; value: string; confirm: string }
   | { type: 'confirm'; title: string; message: string; confirm: string; danger?: boolean }
   | { type: 'tunnelForm'; tunnel: Tunnel | null; hostId?: string }

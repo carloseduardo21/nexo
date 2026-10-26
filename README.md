@@ -97,7 +97,12 @@ O mock fica fora do build de produção.
 - Aba **Containers**: os containers Docker do servidor, agrupados por projeto do Compose, com
   status, CPU e memória (a cada 5 s). Iniciar, parar, reiniciar, pausar, remover (só parados).
   **Logs** (acompanhando ao vivo) e **shell** no container abrem numa aba nova, na mesma conexão
-  SSH — sem novo login. Precisa do usuário no grupo `docker` (o painel avisa se não estiver).
+  SSH — sem novo login.
+- Usuário fora do grupo `docker`: o painel oferece **usar sudo** (com confirmação; também no editor
+  do host, "Docker com sudo"). A senha do sudo é a salva do host/credencial, passada direto do cofre
+  para o `sudo -S`; sem senha salva, o Nexo pergunta (e pode salvar). Se a salva for recusada (sudo
+  com outra senha), a digitada fica só na memória — a do login não é trocada. Logs e shell rodam
+  `sudo docker …` no terminal, com a sugestão de senha salva no prompt do sudo.
 
 ## Túneis
 

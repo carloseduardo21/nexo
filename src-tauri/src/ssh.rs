@@ -123,6 +123,10 @@ impl SshSession {
         self.conn.run(command).await
     }
 
+    pub async fn run_with_input(&self, command: &str, input: Option<&[u8]>) -> Result<Output, String> {
+        self.conn.run_with_input(command, input).await
+    }
+
     /// A conexão do terminal, para abrir outro terminal nela (`connect`) sem novo login.
     pub fn connection(&self) -> Option<Arc<Connection>> {
         (!self.conn.is_closed()).then(|| self.conn.share())
@@ -219,9 +223,18 @@ impl Connection {
 
     /// Roda um comando curto num canal extra (sem PTY) e junta a saída.
     pub async fn run(&self, command: &str) -> Result<Output, String> {
+        self.run_with_input(command, None).await
+    }
+
+    /// Como `run`, mandando `input` na entrada do comando (ex.: a senha para `sudo -S`).
+    pub async fn run_with_input(&self, command: &str, input: Option<&[u8]>) -> Result<Output, String> {
         let collect = async {
             let mut channel = self.handle.channel_open_session().await.map_err(|e| format!("não foi possível abrir um canal: {e}"))?;
             channel.exec(true, command).await.map_err(|e| format!("o servidor recusou o comando: {e}"))?;
+            if let Some(input) = input {
+                channel.data(input).await.map_err(|e| format!("não foi possível enviar a entrada: {e}"))?;
+            }
+            channel.eof().await.map_err(|e| format!("não foi possível enviar a entrada: {e}"))?;
             let mut out = Output::default();
             while let Some(msg) = channel.wait().await {
                 match msg {

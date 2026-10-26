@@ -3,7 +3,7 @@
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 
 const rdp = { domain: '', width: 0, height: 0, hidpi: false, clipboard: true, captureKeys: true, gfx: true };
-const base = { auth: 'password', keyPath: '', jumpHostId: '', protocol: 'ssh', rdp, credentialId: '', hasPassword: true, hasPassphrase: false };
+const base = { auth: 'password', keyPath: '', jumpHostId: '', protocol: 'ssh', rdp, credentialId: '', dockerSudo: false, hasPassword: true, hasPassphrase: false };
 
 const hosts = [
   { ...base, id: 'h1', label: 'web-01', hostname: '10.0.1.11', port: 22, username: 'deploy', group: 'Produção', credentialId: 'c1' },
@@ -82,8 +82,14 @@ const containers = [
 
 export function installDevMock() {
   mockWindows('main');
-  const view = new URLSearchParams(location.search).get('view');
-  mockIPC((cmd) => {
+  const params = new URLSearchParams(location.search);
+  const view = params.get('view');
+  // `?docker=denied`: usuário fora do grupo docker; o sudo pede senha (qualquer uma serve).
+  // `&sudo=1`: o primeiro host já está com "Docker com sudo" ligado.
+  const denied = params.get('docker') === 'denied';
+  if (params.get('sudo')) hosts[0].dockerSudo = true;
+  mockIPC((cmd, args) => {
+    const a = args as Record<string, any> | undefined;
     switch (cmd) {
       case 'list_shells':
         return shells;
@@ -106,7 +112,15 @@ export function installDevMock() {
       case 'host_metrics':
         return metrics();
       case 'docker_list':
-        return containers;
+      case 'docker_action':
+        if (denied && !a?.sudo) return Promise.reject({ kind: 'permission', message: 'sem permissão para usar o Docker (o usuário não está no grupo docker)' });
+        if (denied && !a?.sudo.password) return Promise.reject({ kind: 'needSudoPassword', wrong: false });
+        return cmd === 'docker_list' ? containers : null;
+      case 'host_save': {
+        const index = hosts.findIndex((h) => h.id === a?.host.id);
+        if (index >= 0) hosts[index] = { ...hosts[index], ...a?.host };
+        return a?.host;
+      }
       default:
         return null;
     }

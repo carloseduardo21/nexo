@@ -87,19 +87,27 @@ pub async fn ssh_connect(
 #[derive(serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Exec {
-    DockerLogs { container: String },
-    DockerShell { container: String },
+    DockerLogs {
+        container: String,
+        #[serde(default)]
+        sudo: bool,
+    },
+    DockerShell {
+        container: String,
+        #[serde(default)]
+        sudo: bool,
+    },
 }
 
 impl Exec {
     fn command(&self) -> Result<String, String> {
-        let (Self::DockerLogs { container } | Self::DockerShell { container }) = self;
+        let (Self::DockerLogs { container, sudo } | Self::DockerShell { container, sudo }) = self;
         if !docker::valid_id(container) {
             return Err("container inválido".into());
         }
         Ok(match self {
-            Self::DockerLogs { .. } => docker::logs_command(container),
-            Self::DockerShell { .. } => docker::shell_command(container),
+            Self::DockerLogs { .. } => docker::logs_command(container, *sudo),
+            Self::DockerShell { .. } => docker::shell_command(container, *sudo),
         })
     }
 }
@@ -337,27 +345,63 @@ pub async fn host_metrics(sessions: State<'_, SessionManager>, id: u32) -> Resul
     }
 }
 
-#[tauri::command]
-pub async fn docker_list(sessions: State<'_, SessionManager>, id: u32) -> Result<Vec<docker::Container>, String> {
-    let session = ssh_for(&sessions, id)?;
-    let out = session.as_ssh().unwrap().run(docker::LIST_SCRIPT).await?;
-    match out.status {
-        Some(0) => Ok(docker::parse_list(&out.stdout())),
-        status => Err(docker::describe_error(status, &out.stderr())),
+/// `docker` via sudo: a senha é a digitada agora ou, sem ela, a salva do host (ou da credencial).
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Sudo {
+    host_id: String,
+    password: Option<String>,
+    /// Salvar a senha digitada no cofre, se o sudo aceitar.
+    #[serde(default)]
+    remember: bool,
+}
+
+/// Roda um script do Docker na sessão `id`, direto ou via sudo.
+async fn run_docker(sessions: &SessionManager, vault: &Vault, id: u32, script: &str, sudo: Option<Sudo>) -> Result<String, docker::Error> {
+    let session = ssh_for(sessions, id).map_err(docker::Error::other)?;
+    let ssh = session.as_ssh().unwrap();
+    let typed = sudo.as_ref().and_then(|s| s.password.clone());
+    let password = typed.clone().or_else(|| sudo.as_ref().and_then(|s| vault.host(&s.host_id)?.1.password));
+    let command = docker::with_sudo(script, sudo.is_some(), password.is_some());
+    let input = password.map(|p| format!("{p}\n"));
+    let out = ssh.run_with_input(&command, input.as_deref().map(str::as_bytes)).await.map_err(docker::Error::other)?;
+    if out.status != Some(0) {
+        return Err(docker::describe_error(out.status, &out.stderr()));
     }
+    if let (Some(sudo), Some(password)) = (sudo, typed) {
+        // Só se o host ainda não tem senha: a salva é a do login SSH, que pode ser outra.
+        if sudo.remember && vault.host(&sudo.host_id).is_some_and(|(_, s)| s.password.is_none()) {
+            let _ = vault.update_secret(&sudo.host_id, |s| s.password = Some(password));
+        }
+    }
+    Ok(out.stdout())
 }
 
 #[tauri::command]
-pub async fn docker_action(sessions: State<'_, SessionManager>, id: u32, container: String, action: docker::Action) -> Result<(), String> {
+pub async fn docker_list(
+    sessions: State<'_, SessionManager>,
+    vault: State<'_, Vault>,
+    id: u32,
+    sudo: Option<Sudo>,
+) -> Result<Vec<docker::Container>, docker::Error> {
+    let out = run_docker(&sessions, &vault, id, docker::LIST_SCRIPT, sudo).await?;
+    Ok(docker::parse_list(&out))
+}
+
+#[tauri::command]
+pub async fn docker_action(
+    sessions: State<'_, SessionManager>,
+    vault: State<'_, Vault>,
+    id: u32,
+    container: String,
+    action: docker::Action,
+    sudo: Option<Sudo>,
+) -> Result<(), docker::Error> {
     if !docker::valid_id(&container) {
-        return Err("container inválido".into());
+        return Err(docker::Error::other("container inválido"));
     }
-    let session = ssh_for(&sessions, id)?;
-    let out = session.as_ssh().unwrap().run(&docker::action_command(&container, action)).await?;
-    match out.status {
-        Some(0) => Ok(()),
-        status => Err(docker::describe_error(status, &out.stderr())),
-    }
+    run_docker(&sessions, &vault, id, &docker::action_command(&container, action), sudo).await?;
+    Ok(())
 }
 
 // ---------- SFTP ----------

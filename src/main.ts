@@ -19,7 +19,8 @@ if (mocked) {
   const params = new URLSearchParams(location.search);
   const view = params.get('view') as View | null;
   if (view && view !== 'session') showView(view);
-  // `?panel=host|sftp` conecta no primeiro host SSH e abre o painel lateral (`&tab=containers`).
+  // `?panel=host|sftp` conecta no primeiro host SSH e abre o painel lateral (`&tab=containers`,
+  // `&docker=denied` simula usuário fora do grupo docker).
   const panel = params.get('panel') as SidePanel | null;
   if (panel) {
     setTimeout(() => {

@@ -89,6 +89,9 @@ pub struct Host {
     /// Credencial salva usada pelo host (usuário, método e segredos vêm dela); vazio = dados do próprio host.
     #[serde(default)]
     pub credential_id: String,
+    /// Painel de containers usa `sudo docker` (usuário fora do grupo docker).
+    #[serde(default)]
+    pub docker_sudo: bool,
 }
 
 /// Credencial reutilizável (como as "identities" do Termius): vários hosts, SSH ou RDP, usam a mesma.

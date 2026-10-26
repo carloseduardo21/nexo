@@ -14,7 +14,17 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
   import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
   import type { Container, ContainerAction } from '../lib/backend';
-  import { CONTAINERS_INTERVAL, containerAction, hostinfo, loadContainers, openContainerTerminal } from '../lib/hostinfo.svelte';
+  import ShieldIcon from '@lucide/svelte/icons/shield-alert';
+  import XIcon from '@lucide/svelte/icons/x';
+  import {
+    CONTAINERS_INTERVAL,
+    containerAction,
+    hostinfo,
+    loadContainers,
+    openContainerTerminal,
+    paneHost,
+    setDockerSudo,
+  } from '../lib/hostinfo.svelte';
   import { copyText } from '../lib/actions.svelte';
   import { cn } from '$lib/utils.js';
 
@@ -37,6 +47,7 @@
     return [...map];
   });
   const running = $derived((list ?? []).filter((c) => c.state === 'running').length);
+  const sudo = $derived(!!paneHost(paneId)?.dockerSudo);
 
   $effect(() => {
     const pane = paneId;
@@ -80,7 +91,17 @@
     <Input bind:value={query} placeholder="Filtrar containers" class="h-8 pl-8 text-sm" spellcheck={false} />
   </div>
   <div class="flex items-center justify-between text-xs text-muted-foreground">
-    <span>{list ? `${running} rodando · ${list.length} no total` : ''}</span>
+    <span class="flex items-center gap-2">
+      {#if sudo}
+        <button
+          class="flex items-center gap-1 rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 hover:bg-amber-500/25 dark:text-amber-400"
+          title="Os comandos rodam com sudo docker. Clique para parar de usar sudo."
+          onclick={() => setDockerSudo(paneId, false)}>
+          SUDO <XIcon class="size-2.5" />
+        </button>
+      {/if}
+      {list ? `${running} rodando · ${list.length} no total` : ''}
+    </span>
     <label class="flex cursor-pointer items-center gap-1.5">
       Mostrar parados
       <Switch bind:checked={hostinfo.showStopped} class="scale-75" />
@@ -90,7 +111,15 @@
 
 <div class="min-h-0 flex-1 overflow-y-auto">
   {#if docker?.error}
-    <p class="p-4 text-center text-sm text-destructive">{docker.error}</p>
+    <div class="flex flex-col items-center gap-3 p-4 text-center">
+      <p class="text-sm text-destructive">{docker.error}</p>
+      {#if docker.offerSudo}
+        <p class="text-xs text-muted-foreground">Se o usuário pode usar sudo, o painel roda <code>sudo docker</code>.</p>
+        <Button size="sm" variant="outline" onclick={() => setDockerSudo(paneId, true)}><ShieldIcon />Usar sudo</Button>
+      {:else if docker.paused}
+        <Button size="sm" variant="outline" onclick={() => loadContainers(paneId, true)}>Tentar de novo</Button>
+      {/if}
+    </div>
   {/if}
   {#if !list}
     {#if !docker?.error}<p class="p-6 text-center text-sm text-muted-foreground">Consultando o Docker…</p>{/if}

@@ -41,6 +41,8 @@ export interface Host {
   rdp: RdpSettings;
   /** Credencial salva (usuário, método e segredos vêm dela); '' = dados do próprio host. */
   credentialId: string;
+  /** Painel de containers usa `sudo docker` (usuário fora do grupo docker). */
+  dockerSudo: boolean;
 }
 
 export interface Credential {
@@ -163,7 +165,20 @@ export interface Container {
 export type ContainerAction = 'start' | 'stop' | 'restart' | 'pause' | 'unpause' | 'remove';
 
 /** Terminal SSH que roda um comando em vez do shell. */
-export type Exec = { kind: 'dockerLogs'; container: string } | { kind: 'dockerShell'; container: string };
+export type Exec = { kind: 'dockerLogs' | 'dockerShell'; container: string; sudo: boolean };
+
+/** `docker` via sudo: sem `password`, o backend usa a senha salva do host (ou da credencial). */
+export interface Sudo {
+  hostId: string;
+  password?: string;
+  /** Salvar a senha digitada no cofre, se o sudo aceitar. */
+  remember?: boolean;
+}
+
+export type DockerError =
+  | { kind: 'permission'; message: string }
+  | { kind: 'needSudoPassword'; wrong: boolean }
+  | { kind: 'other'; message: string };
 
 export interface TransferProgress {
   done: number;
@@ -284,8 +299,10 @@ export const backend = {
   sshConfigImport: (path: string, aliases: string[]) => invoke<number>('ssh_config_import', { path, aliases }),
 
   hostMetrics: (id: number) => invoke<HostMetrics>('host_metrics', { id }),
-  dockerList: (id: number) => invoke<Container[]>('docker_list', { id }),
-  dockerAction: (id: number, container: string, action: ContainerAction) => invoke<void>('docker_action', { id, container, action }),
+  /** Erros vêm como `DockerError`. */
+  dockerList: (id: number, sudo?: Sudo) => invoke<Container[]>('docker_list', { id, sudo }),
+  dockerAction: (id: number, container: string, action: ContainerAction, sudo?: Sudo) =>
+    invoke<void>('docker_action', { id, container, action, sudo }),
 
   sftpHome: (id: number) => invoke<string>('sftp_home', { id }),
   sftpList: (id: number, path: string) => invoke<RemoteEntry[]>('sftp_list', { id, path }),
