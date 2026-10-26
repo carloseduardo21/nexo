@@ -11,9 +11,10 @@
   import PaneTree from './components/PaneTree.svelte';
   import Dialogs from './components/Dialogs.svelte';
   import SftpPanel from './components/SftpPanel.svelte';
+  import HostPanel from './components/HostPanel.svelte';
   import { app, handleShortcut, init } from './lib/state.svelte';
   import { settings } from './lib/settings.svelte';
-  import { sftp } from './lib/sftp.svelte';
+  import { side } from './lib/side.svelte';
 
   onMount(() => {
     void init();
@@ -50,8 +51,10 @@
         {/each}
       </div>
     </main>
-    {#if session && sftp.open}
+    {#if session && side.panel === 'sftp'}
       <SftpPanel />
+    {:else if session && side.panel === 'host'}
+      <HostPanel />
     {/if}
   </div>
 </div>

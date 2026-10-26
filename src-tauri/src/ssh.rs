@@ -116,6 +116,31 @@ impl SshSession {
     pub async fn reset_sftp(&self) {
         self.sftp.lock().await.take();
     }
+
+    /// Roda um comando curto num canal extra da mesma conexão do terminal.
+    pub async fn run(&self, command: &str) -> Result<Output, String> {
+        self.conn.run(command).await
+    }
+}
+
+const RUN_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Resultado de `SshSession::run`.
+#[derive(Default)]
+pub struct Output {
+    pub status: Option<u32>,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+impl Output {
+    pub fn stdout(&self) -> String {
+        String::from_utf8_lossy(&self.stdout).into_owned()
+    }
+
+    pub fn stderr(&self) -> String {
+        String::from_utf8_lossy(&self.stderr).trim().to_string()
+    }
 }
 
 impl Session for SshSession {
@@ -168,6 +193,26 @@ impl Connection {
         for jump in self.jumps.iter().rev() {
             let _ = jump.disconnect(Disconnect::ByApplication, "", "pt-BR").await;
         }
+    }
+
+    /// Roda um comando curto num canal extra (sem PTY) e junta a saída.
+    pub async fn run(&self, command: &str) -> Result<Output, String> {
+        let collect = async {
+            let mut channel = self.handle.channel_open_session().await.map_err(|e| format!("não foi possível abrir um canal: {e}"))?;
+            channel.exec(true, command).await.map_err(|e| format!("o servidor recusou o comando: {e}"))?;
+            let mut out = Output::default();
+            while let Some(msg) = channel.wait().await {
+                match msg {
+                    ChannelMsg::Data { data } => out.stdout.extend_from_slice(&data),
+                    ChannelMsg::ExtendedData { data, .. } => out.stderr.extend_from_slice(&data),
+                    ChannelMsg::ExitStatus { exit_status } => out.status = Some(exit_status),
+                    ChannelMsg::Close => break,
+                    _ => {}
+                }
+            }
+            Ok(out)
+        };
+        tokio::time::timeout(RUN_TIMEOUT, collect).await.map_err(|_| "o servidor não respondeu a tempo".to_string())?
     }
 
     /// Caiu a conexão com o destino ou com algum jump host.

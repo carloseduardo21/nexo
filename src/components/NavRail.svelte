@@ -5,10 +5,11 @@
   import SettingsIcon from '@lucide/svelte/icons/settings';
   import PanelLeftIcon from '@lucide/svelte/icons/panel-left';
   import FolderIcon from '@lucide/svelte/icons/folder-open';
+  import ActivityIcon from '@lucide/svelte/icons/activity';
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
   import { app, showView, type View } from '../lib/state.svelte';
   import { settings, updateSettings } from '../lib/settings.svelte';
-  import { sftp, toggleSftp } from '../lib/sftp.svelte';
+  import { side, togglePanel } from '../lib/side.svelte';
   import { cn } from '$lib/utils.js';
 
   const items: { view: View; label: string; icon: typeof ServerIcon }[] = [
@@ -53,7 +54,8 @@
 
     {#if app.view === 'session'}
       {@render railButton(settings.hostsSidebar ? 'Esconder lista de hosts' : 'Mostrar lista de hosts', settings.hostsSidebar, () => updateSettings({ hostsSidebar: !settings.hostsSidebar }), PanelLeftIcon)}
-      {@render railButton('Arquivos SFTP (Ctrl+Shift+F)', sftp.open, toggleSftp, FolderIcon)}
+      {@render railButton('Arquivos SFTP (Ctrl+Shift+F)', side.panel === 'sftp', () => togglePanel('sftp'), FolderIcon)}
+      {@render railButton('Painel do host (Ctrl+Shift+M)', side.panel === 'host', () => togglePanel('host'), ActivityIcon)}
     {/if}
     {@render railButton('Configurações', app.view === 'settings', () => showView('settings'), SettingsIcon)}
   </nav>

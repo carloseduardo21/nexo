@@ -12,6 +12,7 @@ use russh_sftp::client::SftpSession;
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Manager, State};
 
+use crate::hostinfo;
 use crate::local;
 use crate::rdp;
 use crate::session::{Session, SessionManager};
@@ -276,6 +277,26 @@ pub fn session_resize(sessions: State<'_, SessionManager>, id: u32, cols: u16, r
 pub fn session_kill(sessions: State<'_, SessionManager>, id: u32) {
     if let Some(s) = sessions.get(id) {
         s.kill();
+    }
+}
+
+// ---------- Painel do host ----------
+
+/// Sessão SSH `id` (para rodar comandos no servidor).
+fn ssh_for(sessions: &SessionManager, id: u32) -> Result<Arc<dyn Session>, String> {
+    let session = sessions.get(id).ok_or("sessão encerrada")?;
+    session.as_ssh().ok_or("não é uma sessão SSH")?;
+    Ok(session)
+}
+
+#[tauri::command]
+pub async fn host_metrics(sessions: State<'_, SessionManager>, id: u32) -> Result<hostinfo::Metrics, String> {
+    let session = ssh_for(&sessions, id)?;
+    let out = session.as_ssh().unwrap().run(hostinfo::METRICS_SCRIPT).await?;
+    match out.status {
+        Some(0) => hostinfo::parse(&out.stdout()),
+        Some(3) => Err("métricas só funcionam em servidores Linux".into()),
+        _ => Err(format!("o servidor não devolveu as métricas: {}", out.stderr())),
     }
 }
 

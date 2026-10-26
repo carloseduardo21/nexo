@@ -27,6 +27,36 @@ const shells = [
   { id: 'wsl', name: 'Ubuntu (WSL)', kind: 'wsl', program: 'wsl.exe', args: [] },
 ];
 
+// Contadores que avançam a cada leitura, com uso de CPU e rede oscilando.
+let tick = 0;
+let busyJiffies = 0;
+function metrics() {
+  tick++;
+  const GB = 1024 ** 3;
+  busyJiffies += 8 * (20 + 15 * Math.sin(tick / 4) + Math.random() * 10);
+  return {
+    hostname: 'web-01',
+    kernel: 'Linux 6.1.0-26-amd64',
+    os: 'Debian GNU/Linux 12 (bookworm)',
+    cpus: 4,
+    cpuTotal: tick * 800,
+    cpuIdle: tick * 800 - busyJiffies,
+    load: [0.84, 0.62, 0.51],
+    uptime: 352_000 + tick * 2,
+    memTotal: 8 * GB,
+    memAvailable: (3.1 + Math.sin(tick / 6) * 0.3) * GB,
+    swapTotal: 2 * GB,
+    swapFree: 1.7 * GB,
+    netRx: tick * 1_400_000,
+    netTx: tick * 260_000,
+    disks: [
+      { mount: '/', device: '/dev/sda1', total: 80 * GB, used: 61 * GB },
+      { mount: '/var/lib/postgresql', device: '/dev/sdb1', total: 200 * GB, used: 187 * GB },
+      { mount: '/mnt/backup', device: 'nas:/backup', total: 2048 * GB, used: 410 * GB },
+    ],
+  };
+}
+
 export function installDevMock() {
   mockWindows('main');
   const view = new URLSearchParams(location.search).get('view');
@@ -48,6 +78,10 @@ export function installDevMock() {
         return '0.1.0';
       case 'pty_spawn':
         return 1;
+      case 'ssh_connect':
+        return 2;
+      case 'host_metrics':
+        return metrics();
       default:
         return null;
     }

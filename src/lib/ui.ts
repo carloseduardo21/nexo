@@ -65,3 +65,26 @@ export function matchHost(host: HostView, query: string) {
   const q = query.trim().toLowerCase();
   return !q || [host.label, host.hostname, host.username, host.group].some((v) => v.toLowerCase().includes(q));
 }
+
+/** `1.4 GB`, `512 KB`… (base 1024). */
+export function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB', 'TB', 'PB'];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+}
+
+/** `3d 4h`, `5h 12min`, `8min`. */
+export function formatUptime(seconds: number) {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}min`;
+  return `${m}min`;
+}

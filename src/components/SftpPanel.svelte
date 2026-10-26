@@ -3,10 +3,12 @@
   import { getCurrentWebview } from '@tauri-apps/api/webview';
   import Icon from './Icon.svelte';
   import { app } from '../lib/state.svelte';
+  import { formatBytes } from '../lib/ui';
   import { backend, type RemoteEntry } from '../lib/backend';
   import {
     cancelTransfer,
     cdInTerminal,
+    closeSftp,
     clearTransfers,
     copyText,
     download,
@@ -132,18 +134,6 @@
     if (target && browser) void navigate(target, await backend.sftpHome(browser.sessionId));
   }
 
-  function formatSize(bytes: number) {
-    if (bytes < 1024) return `${bytes} B`;
-    const units = ['KB', 'MB', 'GB', 'TB'];
-    let value = bytes / 1024;
-    let unit = 0;
-    while (value >= 1024 && unit < units.length - 1) {
-      value /= 1024;
-      unit++;
-    }
-    return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
-  }
-
   const dateFormat = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
   const formatDate = (secs: number | null) => (secs ? dateFormat.format(secs * 1000) : '');
   const percent = (done: number, total: number) => (total > 0 ? Math.min(100, (done / total) * 100) : 0);
@@ -163,7 +153,7 @@
       class:on={sftp.showHidden}
       title={sftp.showHidden ? 'Esconder arquivos ocultos' : 'Mostrar arquivos ocultos'}
       onclick={() => (sftp.showHidden = !sftp.showHidden)}><Icon name={sftp.showHidden ? 'eye' : 'eyeOff'} size={14} /></button>
-    <button class="icon-button" title="Fechar (Ctrl+Shift+F)" onclick={() => (sftp.open = false)}><Icon name="x" size={14} /></button>
+    <button class="icon-button" title="Fechar (Ctrl+Shift+F)" onclick={closeSftp}><Icon name="x" size={14} /></button>
   </header>
 
   {#if !target}
@@ -222,7 +212,7 @@
           role="option"
           tabindex="-1"
           aria-selected={browser.selected.includes(entry.path)}
-          title={`${entry.name}\n${entry.perms}${entry.isDir ? '' : ` · ${formatSize(entry.size)}`}`}
+          title={`${entry.name}\n${entry.perms}${entry.isDir ? '' : ` · ${formatBytes(entry.size)}`}`}
           onmousedown={(e) => e.button === 0 && select(target, entry, e)}
           ondblclick={() => open(entry)}
           oncontextmenu={(e) => {
@@ -234,7 +224,7 @@
             {#if entry.isLink}<span class="sftp-link"><Icon name="link" size={9} /></span>{/if}
           </span>
           <span class="sftp-name">{entry.name}</span>
-          <span class="sftp-size">{entry.isDir ? '' : formatSize(entry.size)}</span>
+          <span class="sftp-size">{entry.isDir ? '' : formatBytes(entry.size)}</span>
           <span class="sftp-date">{formatDate(entry.modified)}</span>
         </div>
       {:else}
@@ -266,9 +256,9 @@
               </div>
               {#if t.status === 'running'}
                 <div class="bar"><div style:width="{percent(t.done, t.total)}%"></div></div>
-                <span class="transfer-detail">{formatSize(t.done)} de {formatSize(t.total)}</span>
+                <span class="transfer-detail">{formatBytes(t.done)} de {formatBytes(t.total)}</span>
               {:else if t.status === 'done'}
-                <span class="transfer-detail">{t.kind === 'download' ? 'Baixado' : 'Enviado'} · {formatSize(t.total)}</span>
+                <span class="transfer-detail">{t.kind === 'download' ? 'Baixado' : 'Enviado'} · {formatBytes(t.total)}</span>
               {:else if t.status === 'canceled'}
                 <span class="transfer-detail">Cancelado</span>
               {:else}

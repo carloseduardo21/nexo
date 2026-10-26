@@ -1,5 +1,6 @@
 mod commands;
 mod flow;
+mod hostinfo;
 mod keyhook;
 mod local;
 mod rdp;
@@ -51,6 +52,7 @@ pub fn run() {
             commands::session_send_secret,
             commands::session_resize,
             commands::session_kill,
+            commands::host_metrics,
             commands::sftp_home,
             commands::sftp_list,
             commands::sftp_mkdir,

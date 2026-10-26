@@ -127,6 +127,25 @@ export interface RemoteEntry {
   perms: string;
 }
 
+/** Leitura do servidor (`hostinfo.rs`). Bytes; CPU e rede são contadores desde o boot. */
+export interface HostMetrics {
+  hostname: string;
+  kernel: string;
+  os: string;
+  cpus: number;
+  cpuTotal: number;
+  cpuIdle: number;
+  load: [number, number, number];
+  uptime: number;
+  memTotal: number;
+  memAvailable: number;
+  swapTotal: number;
+  swapFree: number;
+  netRx: number;
+  netTx: number;
+  disks: { mount: string; device: string; total: number; used: number }[];
+}
+
 export interface TransferProgress {
   done: number;
   total: number;
@@ -241,6 +260,8 @@ export const backend = {
   sshConfigScan: (path?: string) => invoke<{ path: string; entries: SshConfigEntry[] }>('ssh_config_scan', { path }),
   /** Devolve quantos hosts foram criados (inclui jump hosts de que os escolhidos dependem). */
   sshConfigImport: (path: string, aliases: string[]) => invoke<number>('ssh_config_import', { path, aliases }),
+
+  hostMetrics: (id: number) => invoke<HostMetrics>('host_metrics', { id }),
 
   sftpHome: (id: number) => invoke<string>('sftp_home', { id }),
   sftpList: (id: number, path: string) => invoke<RemoteEntry[]>('sftp_list', { id, path }),

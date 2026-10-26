@@ -25,7 +25,8 @@ Os instaladores não são assinados: o Windows SmartScreen avisa na primeira exe
 
 Só a interface, no navegador (`npm run dev` e abrir http://localhost:1420): fora do Tauri, o
 `src/dev-mock.ts` simula o backend com dados de exemplo. `?view=credentials|tunnels|settings|session`,
-`?dialog=host|newhost|credential|tunnel|palette|generate` e `?theme=light` abrem direto uma tela.
+`?dialog=host|newhost|credential|tunnel|palette|generate`, `?panel=host|sftp` (com `view=session`) e
+`?theme=light` abrem direto uma tela.
 O mock fica fora do build de produção.
 
 ## Interface
@@ -51,6 +52,7 @@ O mock fica fora do build de produção.
 | `Ctrl+Shift+W` | Fechar painel |
 | `Ctrl+Shift+B` | Broadcast na aba atual |
 | `Ctrl+Shift+F` | Painel de arquivos (SFTP) |
+| `Ctrl+Shift+M` | Painel do host (métricas) |
 | `Alt+setas` | Navegar entre painéis |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Próxima / anterior aba |
 | `Ctrl+C` (com seleção) / `Ctrl+V` | Copiar / colar |
@@ -84,6 +86,14 @@ O mock fica fora do build de produção.
 - Enviar: botão de upload ou arrastar arquivos e pastas do Explorer para o painel.
 - Botão direito: renomear (`F2`), excluir (`Del`, recursivo), copiar caminho, "abrir no terminal" (`cd`).
 - Transferências com progresso e cancelamento; pastas são copiadas recursivamente.
+
+## Painel do host
+
+- Painel lateral (`Ctrl+Shift+M` ou o botão de atividade na barra da esquerda) com o servidor do
+  painel SSH focado: CPU (com gráfico dos últimos 2 minutos e carga média), memória e swap, rede
+  (taxa de download/upload) e uso de cada disco. Atualiza a cada 2 segundos enquanto está aberto.
+- Usa um canal extra na conexão do terminal e só lê `/proc` e `df`: nada é instalado no servidor.
+  Funciona em servidores Linux (inclusive Alpine/BusyBox).
 
 ## Túneis
 
@@ -126,6 +136,7 @@ O mock fica fora do build de produção.
   `Channel` em binário; o input passa por uma fila por sessão que preserva a ordem das teclas.
   `flow.rs` pausa a leitura quando o frontend fica mais de 2 MB atrás (ack do xterm.js).
   `sftp.rs` abre o subsistema SFTP sob demanda na conexão de cada `SshSession`.
+  `hostinfo.rs` lê as métricas do servidor (um script em `/proc` num canal extra da sessão).
   `tunnel.rs` mantém os túneis (conexão própria via `ssh::establish`, reconexão, SOCKS5).
   `rdp.rs` é a sessão RDP (IronRDP): decodifica a tela e manda só as regiões alteradas, com ack
   por mensagem desenhada; input chega por `rdp_input` (scancodes, mouse, roda).

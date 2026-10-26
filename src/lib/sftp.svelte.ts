@@ -3,6 +3,7 @@ import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { backend, type RemoteEntry, type TransferProgress } from './backend';
 import { leaves } from './layout';
 import { activeTab, app, openDialog } from './state.svelte';
+import { side, togglePanel } from './side.svelte';
 
 /** Estado do navegador de arquivos de um painel SSH. */
 export interface Browser {
@@ -41,7 +42,6 @@ function storedWidth() {
 }
 
 export const sftp = $state({
-  open: false,
   width: storedWidth(),
   showHidden: false,
   browsers: {} as Record<string, Browser>,
@@ -57,11 +57,10 @@ export function setWidth(width: number) {
   }
 }
 
-export function toggleSftp() {
-  sftp.open = !sftp.open;
-}
+export const toggleSftp = () => togglePanel('sftp');
+export const closeSftp = () => (side.panel = null);
 
-/** Painel SSH que o navegador mostra: o focado, ou o primeiro SSH da aba. */
+/** Painel SSH que os painéis laterais mostram: o focado, ou o primeiro SSH da aba. */
 export function sftpTarget(): string | undefined {
   const tab = activeTab();
   if (!tab) return undefined;

@@ -17,6 +17,7 @@ import {
 import { leaves, removeLeaf, splitLeaf, type PaneNode, type SplitDir, type SplitNode } from './layout';
 import { loadSettings, settings } from './settings.svelte';
 import { toggleSftp } from './sftp.svelte';
+import { togglePanel } from './side.svelte';
 import { RdpPane } from './rdp';
 import { TermPane, type PaneSpec } from './term';
 
@@ -571,6 +572,7 @@ export function handleShortcut(e: KeyboardEvent) {
       case 'KeyE': split('col'); break;
       case 'KeyB': toggleBroadcast(); break;
       case 'KeyF': toggleSftp(); break;
+      case 'KeyM': togglePanel('host'); break;
       case 'KeyC': if (focused) void panes.get(focused)?.copy(); break;
       case 'KeyV': if (focused) void panes.get(focused)?.paste(); break;
       case 'Tab': cycleTab(-1); break;
