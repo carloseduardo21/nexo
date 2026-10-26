@@ -68,6 +68,19 @@ npm run tauri build
   "Iniciar automaticamente" sobe o túnel quando o Nexo abre.
 - O servidor precisa de `AllowTcpForwarding yes` (padrão do OpenSSH).
 
+## RDP
+
+- No formulário de host, escolha **RDP**: a área de trabalho abre numa aba (ou painel), como um terminal.
+- Login automático: com usuário e senha salvos no cofre, o servidor pula a tela de login (o xRDP
+  também). Sem senha salva, o Nexo pergunta ao conectar (com opção de salvar).
+- **Gateway SSH**: qualquer host SSH salvo pode ser o túnel até o servidor RDP (jump hosts em
+  cadeia valem) — útil para xRDP que só escuta na rede interna.
+- Certificado TLS: confiança no primeiro uso, como o `known_hosts`; o Nexo avisa se ele mudar.
+- Resolução acompanha o painel (ao vivo no xRDP 0.10+/Windows; reconecta em servidores antigos)
+  ou fixa. "Alta resolução" usa os pixels físicos da tela.
+- Teclado por scancode: o layout é o do servidor (o Nexo informa o layout do Windows, ex.: ABNT2).
+- Painel encerrado: `Enter` ou o botão reconecta.
+
 ## Arquitetura
 
 - `src-tauri/` — backend Rust (Tauri 2). Cada sessão implementa o trait `Session`
@@ -76,7 +89,11 @@ npm run tauri build
   `flow.rs` pausa a leitura quando o frontend fica mais de 2 MB atrás (ack do xterm.js).
   `sftp.rs` abre o subsistema SFTP sob demanda na conexão de cada `SshSession`.
   `tunnel.rs` mantém os túneis (conexão própria via `ssh::establish`, reconexão, SOCKS5).
-  Testes contra um servidor real: `cargo test -- --ignored live` (ver comentários nos testes).
+  `rdp.rs` é a sessão RDP (IronRDP): decodifica a tela e manda só as regiões alteradas, com ack
+  por mensagem desenhada; input chega por `rdp_input` (scancodes, mouse, roda).
+  Testes contra servidores reais: `cargo test -- --ignored live` (ver comentários nos testes;
+  o de RDP usa um container xRDP na porta 13389).
 - `src/` — frontend Svelte 5 + xterm.js (renderer WebGL). `lib/state.svelte.ts` guarda abas,
   árvore de painéis e broadcast; `lib/term.ts` encapsula cada terminal; `lib/sftp.svelte.ts`
-  guarda o navegador de arquivos de cada painel SSH e as transferências.
+  guarda o navegador de arquivos de cada painel SSH e as transferências; `lib/rdp.ts` é o painel
+  RDP (canvas, mapa de scancodes, cursor do servidor).

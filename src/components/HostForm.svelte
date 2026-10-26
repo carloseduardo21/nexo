@@ -2,7 +2,10 @@
   import { untrack } from 'svelte';
   import Modal from './Modal.svelte';
   import { app, closeDialog, connectHost, deleteHost, saveHost } from '../lib/state.svelte';
-  import type { HostView } from '../lib/backend';
+  import type { HostView, Protocol } from '../lib/backend';
+
+  const DEFAULT_PORT: Record<Protocol, number> = { ssh: 22, rdp: 3389 };
+  const RESOLUTIONS = ['1280x720', '1366x768', '1600x900', '1920x1080', '2560x1440'];
 
   let { host }: { host: HostView | null } = $props();
 
@@ -17,7 +20,17 @@
     keyPath: initial?.keyPath ?? '',
     group: initial?.group ?? '',
     jumpHostId: initial?.jumpHostId ?? '',
+    protocol: initial?.protocol ?? ('ssh' as Protocol),
   });
+  let rdp = $state({ domain: '', width: 0, height: 0, hidpi: false, ...initial?.rdp });
+  let resolution = $state(rdp.width && rdp.height ? `${rdp.width}x${rdp.height}` : 'fit');
+
+  function setProtocol(protocol: Protocol) {
+    // Porta padrão acompanha o protocolo (se o usuário não escolheu outra).
+    if (Number(form.port) === DEFAULT_PORT[form.protocol]) form.port = DEFAULT_PORT[protocol];
+    form.protocol = protocol;
+    if (protocol === 'rdp') form.auth = 'password';
+  }
 
   // Jump hosts possíveis: qualquer outro host que não dependa (direta ou indiretamente) deste.
   const jumpChoices = $derived.by(() => {
@@ -28,7 +41,9 @@
       }
       return false;
     };
-    return app.hosts.filter((h) => !self || !reaches(h.id)).sort((a, b) => a.label.localeCompare(b.label));
+    return app.hosts
+      .filter((h) => h.protocol !== 'rdp' && (!self || !reaches(h.id)))
+      .sort((a, b) => a.label.localeCompare(b.label));
   });
   let password = $state('');
   let passphrase = $state('');
@@ -56,6 +71,7 @@
     busy = true;
     error = '';
     try {
+      const [width, height] = resolution === 'fit' ? [0, 0] : resolution.split('x').map(Number);
       const saved = await saveHost(
         {
           id: initial?.id ?? '',
@@ -63,8 +79,9 @@
           label: form.label.trim() || form.hostname.trim(),
           hostname: form.hostname.trim(),
           username: form.username.trim(),
-          port: Number(form.port) || 22,
+          port: Number(form.port) || DEFAULT_PORT[form.protocol],
           group: form.group.trim(),
+          rdp: { ...rdp, domain: rdp.domain.trim(), width, height },
         },
         // undefined = manter o que está salvo
         clearPassword ? '' : password || undefined,
@@ -97,11 +114,21 @@
       e.preventDefault();
       void submit(true);
     }}>
+    <div class="segmented" role="radiogroup" aria-label="Protocolo">
+      <button type="button" class:on={form.protocol === 'ssh'} onclick={() => setProtocol('ssh')}>SSH</button>
+      <button type="button" class:on={form.protocol === 'rdp'} onclick={() => setProtocol('rdp')}>RDP (área de trabalho)</button>
+    </div>
+
     <div class="row">
       <label class="grow">
         <span>Endereço</span>
         <!-- svelte-ignore a11y_autofocus -->
-        <input bind:value={form.hostname} onblur={parseAddress} placeholder="192.168.0.10 ou user@host:22" autofocus spellcheck="false" />
+        <input
+          bind:value={form.hostname}
+          onblur={parseAddress}
+          placeholder={`192.168.0.10 ou user@host:${DEFAULT_PORT[form.protocol]}`}
+          autofocus
+          spellcheck="false" />
       </label>
       <label class="port">
         <span>Porta</span>
@@ -111,8 +138,14 @@
     <div class="row">
       <label class="grow">
         <span>Usuário</span>
-        <input bind:value={form.username} placeholder="root" spellcheck="false" autocomplete="off" />
+        <input bind:value={form.username} placeholder={form.protocol === 'rdp' ? 'usuário' : 'root'} spellcheck="false" autocomplete="off" />
       </label>
+      {#if form.protocol === 'rdp'}
+        <label class="grow">
+          <span>Domínio</span>
+          <input bind:value={rdp.domain} placeholder="opcional" spellcheck="false" autocomplete="off" />
+        </label>
+      {/if}
     </div>
     <div class="row">
       <label class="grow">
@@ -125,11 +158,28 @@
       </label>
     </div>
 
+    {#if form.protocol === 'rdp'}
+      <div class="row">
+        <label class="grow">
+          <span>Resolução</span>
+          <select bind:value={resolution}>
+            <option value="fit">Ajustar ao painel (muda junto com a janela)</option>
+            {#each RESOLUTIONS as r (r)}<option value={r}>{r.replace('x', ' × ')}</option>{/each}
+          </select>
+        </label>
+      </div>
+      {#if resolution === 'fit'}
+        <label class="check">
+          <input type="checkbox" bind:checked={rdp.hidpi} /> Alta resolução (pixels físicos da tela: mais nítido, letras menores)
+        </label>
+      {/if}
+    {:else}
     <div class="segmented" role="radiogroup" aria-label="Autenticação">
       <button type="button" class:on={form.auth === 'password'} onclick={() => (form.auth = 'password')}>Senha</button>
       <button type="button" class:on={form.auth === 'key'} onclick={() => (form.auth = 'key')}>Chave SSH</button>
       <button type="button" class:on={form.auth === 'agent'} onclick={() => (form.auth = 'agent')}>Agente SSH</button>
     </div>
+    {/if}
 
     {#if form.auth === 'password'}
       <label>
@@ -141,6 +191,9 @@
           placeholder={initial?.hasPassword ? '•••••••• (salva no cofre)' : 'deixe vazio para perguntar ao conectar'}
           autocomplete="new-password" />
       </label>
+      {#if form.protocol === 'rdp'}
+        <p class="muted">Com a senha salva, o login é automático (o xRDP pula a tela de login).</p>
+      {/if}
       {#if initial?.hasPassword}
         <label class="check"><input type="checkbox" bind:checked={clearPassword} /> Remover senha salva</label>
       {/if}
@@ -169,7 +222,7 @@
     {/if}
 
     <label>
-      <span>Jump host (ProxyJump)</span>
+      <span>{form.protocol === 'rdp' ? 'Gateway SSH (túnel até o servidor RDP)' : 'Jump host (ProxyJump)'}</span>
       <select bind:value={form.jumpHostId}>
         <option value="">Nenhum — conexão direta</option>
         {#each jumpChoices as host (host.id)}

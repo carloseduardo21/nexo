@@ -547,6 +547,65 @@ body.resizing-row * {
   height: 100%;
 }
 
+/* ---------- Área de trabalho remota (RDP) ---------- */
+
+.pane-body.rdp {
+  padding: 0;
+  background: #05070d;
+}
+
+.rdp-host {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  outline: none;
+}
+
+.rdp-canvas {
+  display: block;
+  image-rendering: auto;
+  touch-action: none;
+}
+
+.rdp-canvas[hidden],
+.rdp-status[hidden] {
+  display: none;
+}
+
+.rdp-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  background: #05070dcc;
+}
+
+.rdp-status p {
+  margin: 0;
+  max-width: 560px;
+  line-height: 1.5;
+  user-select: text;
+}
+
+.rdp-status.ended p {
+  color: var(--text);
+}
+
+.rdp-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
 .xterm {
   height: 100%;
 }
@@ -629,6 +688,10 @@ kbd {
 
 .kind-ssh {
   background: #3ee8a0;
+}
+
+.kind-rdp {
+  background: #c77dff;
 }
 
 /* ---------- Hosts na sidebar ---------- */
@@ -737,6 +800,17 @@ kbd {
 .host-sub {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.host-sub .proto {
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #c77dff;
+  background: #c77dff1f;
 }
 
 .list .host-edit {
@@ -955,6 +1029,10 @@ kbd {
   display: flex;
   gap: 12px;
   color: var(--broadcast);
+}
+
+.notice.danger {
+  color: var(--danger);
 }
 
 .notice p {

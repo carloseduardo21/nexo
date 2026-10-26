@@ -114,6 +114,7 @@ impl Importer<'_> {
             key_path: entry.identity_file.clone(),
             group: GROUP.into(),
             jump_host_id: jump,
+            ..Default::default()
         };
         self.visiting.remove(&entry.alias);
         self.ids.insert(entry.alias.clone(), host.id.clone());
@@ -154,7 +155,7 @@ impl Importer<'_> {
                             auth: AuthMethod::Key,
                             key_path: entry.map(|e| e.identity_file).unwrap_or_default(),
                             group: GROUP.into(),
-                            jump_host_id: String::new(),
+                            ..Default::default()
                         };
                         self.created.push(host.clone());
                         host.id

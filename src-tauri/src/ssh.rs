@@ -29,6 +29,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
 pub enum ConnectError {
     UnknownHost { fingerprint: String, key_type: String },
     HostKeyChanged { fingerprint: String, key_type: String, line: usize },
+    /// Certificado TLS de um servidor RDP diferente do confiado antes.
+    CertChanged { fingerprint: String },
     NeedPassword,
     NeedPassphrase { key_path: String },
     AuthFailed { message: String },
@@ -36,7 +38,7 @@ pub enum ConnectError {
 }
 
 impl ConnectError {
-    fn other(e: impl std::fmt::Display) -> Self {
+    pub fn other(e: impl std::fmt::Display) -> Self {
         Self::Other { message: e.to_string() }
     }
 }

@@ -9,6 +9,17 @@ export interface ShellProfile {
   args: string[];
 }
 
+export type Protocol = 'ssh' | 'rdp';
+
+export interface RdpSettings {
+  domain: string;
+  /** Resolução fixa; 0×0 = acompanha o tamanho do painel. */
+  width: number;
+  height: number;
+  /** Resolução em pixels físicos (nítido em telas com escala; a fonte remota fica menor). */
+  hidpi: boolean;
+}
+
 export interface Host {
   id: string;
   label: string;
@@ -18,8 +29,10 @@ export interface Host {
   auth: 'password' | 'key' | 'agent';
   keyPath: string;
   group: string;
-  /** Host salvo usado como jump host (ProxyJump); '' = conexão direta. */
+  /** Host salvo usado como jump host (ProxyJump); '' = conexão direta. Em RDP, é o gateway SSH. */
   jumpHostId: string;
+  protocol: Protocol;
+  rdp: RdpSettings;
 }
 
 export interface HostView extends Host {
@@ -37,6 +50,7 @@ export interface ConnectOptions {
 export type ConnectError =
   | { kind: 'unknownHost'; fingerprint: string; keyType: string }
   | { kind: 'hostKeyChanged'; fingerprint: string; keyType: string; line: number }
+  | { kind: 'certChanged'; fingerprint: string }
   | { kind: 'needPassword' }
   | { kind: 'needPassphrase'; keyPath: string }
   | { kind: 'authFailed'; message: string }
@@ -106,6 +120,16 @@ export type TunnelStatus =
   | { state: 'reconnecting'; attempt: number; message: string }
   | { state: 'error'; message: string };
 
+/** Input de um painel RDP; teclas por scancode (o layout é o do servidor). */
+export type RdpInput =
+  | { t: 'key'; code: number; down: boolean }
+  | { t: 'unicode'; ch: string; down: boolean }
+  | { t: 'move'; x: number; y: number }
+  | { t: 'button'; button: number; down: boolean }
+  | { t: 'wheel'; delta: number; vertical: boolean }
+  | { t: 'sync'; caps: boolean; num: boolean; scroll: boolean }
+  | { t: 'releaseAll' };
+
 export type DataHandler = (data: Uint8Array) => void;
 export type ExitHandler = (code: number | null) => void;
 
@@ -144,6 +168,23 @@ export const backend = {
     rtt.onmessage = onRtt;
     return invoke<number>('ssh_connect', { hostId, options, cols, rows, ...channels(onData, onExit), onRtt: rtt });
   },
+
+  /** onFrame: mensagens binárias de tela (ver `rdp.rs`); onExit: motivo do fim, ou null se foi normal. */
+  connectRdp: (
+    hostId: string,
+    options: RouteOptions,
+    width: number,
+    height: number,
+    onFrame: (buf: ArrayBuffer) => void,
+    onExit: (reason: string | null) => void,
+  ) => {
+    const frame = new Channel<ArrayBuffer>();
+    frame.onmessage = onFrame;
+    const exit = new Channel<string | null>();
+    exit.onmessage = onExit;
+    return invoke<number>('rdp_connect', { hostId, options, width, height, onFrame: frame, onExit: exit });
+  },
+  rdpInput: (id: number, events: RdpInput[]) => void invoke('rdp_input', { id, events }).catch(report),
 
   listHosts: () => invoke<HostView[]>('hosts_list'),
   /** password/passphrase: undefined mantém o salvo, '' apaga. */

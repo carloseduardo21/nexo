@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
+/// Sessão de terminal (PTY local, SSH) ou de área de trabalho remota (RDP).
 pub trait Session: Send + Sync {
     fn write(&self, data: &[u8]) -> std::io::Result<()>;
     fn resize(&self, cols: u16, rows: u16) -> Result<(), String>;
@@ -12,6 +13,9 @@ pub trait Session: Send + Sync {
     fn ack(&self, bytes: usize);
     /// Sessões SSH expõem a conexão (para SFTP); terminais locais não.
     fn as_ssh(&self) -> Option<&crate::ssh::SshSession> {
+        None
+    }
+    fn as_rdp(&self) -> Option<&crate::rdp::RdpSession> {
         None
     }
 }

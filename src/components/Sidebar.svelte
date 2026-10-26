@@ -77,7 +77,10 @@
                   <span class="avatar" style:--h={hue(host.id)}>{initials(host.label)}</span>
                   <span class="host-text">
                     <span class="host-label">{host.label}</span>
-                    <span class="host-sub">{host.username}@{host.hostname}{host.port !== 22 ? `:${host.port}` : ''}</span>
+                    <span class="host-sub">
+                      {#if host.protocol === 'rdp'}<span class="proto">RDP</span>{/if}
+                      {host.username}@{host.hostname}{host.port !== (host.protocol === 'rdp' ? 3389 : 22) ? `:${host.port}` : ''}
+                    </span>
                   </span>
                 </button>
                 <button class="host-edit" title="Editar" onclick={() => editHost(host)}><Icon name="pencil" size={13} /></button>
@@ -100,7 +103,7 @@
   <section class="tunnels-section">
     <div class="section-head">
       <h2>Túneis</h2>
-      <button class="icon-button" title="Novo túnel" disabled={app.hosts.length === 0} onclick={() => editTunnel(null)}>
+      <button class="icon-button" title="Novo túnel" disabled={!app.hosts.some((h) => h.protocol !== 'rdp')} onclick={() => editTunnel(null)}>
         <Icon name="plus" size={15} />
       </button>
     </div>

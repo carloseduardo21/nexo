@@ -9,7 +9,7 @@
   const initial = untrack(() => $state.snapshot(tunnel));
   let form = $state({
     label: initial?.label ?? '',
-    hostId: initial?.hostId ?? untrack(() => hostId) ?? app.hosts[0]?.id ?? '',
+    hostId: initial?.hostId ?? untrack(() => hostId) ?? app.hosts.find((h) => h.protocol !== 'rdp')?.id ?? '',
     kind: initial?.kind ?? ('local' as TunnelKind),
     bindHost: initial?.bindHost ?? '127.0.0.1',
     bindPort: initial?.bindPort ?? ('' as number | ''),
@@ -90,7 +90,7 @@
       <label class="grow">
         <span>Host SSH</span>
         <select bind:value={form.hostId}>
-          {#each app.hosts as host (host.id)}
+          {#each app.hosts.filter((h) => h.protocol !== 'rdp') as host (host.id)}
             <option value={host.id}>{host.label} — {host.username}@{host.hostname}</option>
           {/each}
         </select>

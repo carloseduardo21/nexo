@@ -22,16 +22,37 @@ const KEYRING_USER: &str = "vault-key";
 /// Limite de saltos (jump hosts) num caminho; também pega cadeias circulares.
 const MAX_HOPS: usize = 8;
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum AuthMethod {
+    #[default]
     Password,
     Key,
     /// Chaves do agente SSH do sistema (OpenSSH Agent, Pageant, SSH_AUTH_SOCK).
     Agent,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Protocol {
+    #[default]
+    Ssh,
+    Rdp,
+}
+
+/// Opções de hosts RDP (usuário e senha são os campos comuns do host).
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RdpSettings {
+    pub domain: String,
+    /// Resolução fixa; 0×0 = acompanha o tamanho do painel.
+    pub width: u16,
+    pub height: u16,
+    /// Resolução em pixels físicos da tela (nítido em telas com escala; a fonte remota fica menor).
+    pub hidpi: bool,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Host {
     pub id: String,
@@ -46,8 +67,13 @@ pub struct Host {
     #[serde(default)]
     pub group: String,
     /// Host salvo usado como jump host (ProxyJump); vazio = conexão direta.
+    /// Em hosts RDP, é o gateway SSH por onde a conexão passa.
     #[serde(default)]
     pub jump_host_id: String,
+    #[serde(default)]
+    pub protocol: Protocol,
+    #[serde(default)]
+    pub rdp: RdpSettings,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -73,6 +99,9 @@ struct VaultData {
     secrets: HashMap<String, Secret>,
     #[serde(default)]
     tunnels: Vec<Tunnel>,
+    /// Certificados TLS de servidores RDP confiados: "host:porta" → SHA-256 (como o known_hosts do SSH).
+    #[serde(default)]
+    rdp_certs: HashMap<String, String>,
 }
 
 pub struct Vault {
@@ -178,6 +207,16 @@ impl Vault {
         self.persist(&data)
     }
 
+    pub fn rdp_cert(&self, endpoint: &str) -> Option<String> {
+        self.data.lock().unwrap().rdp_certs.get(endpoint).cloned()
+    }
+
+    pub fn trust_rdp_cert(&self, endpoint: &str, fingerprint: &str) -> Result<(), String> {
+        let mut data = self.data.lock().unwrap();
+        data.rdp_certs.insert(endpoint.to_string(), fingerprint.to_string());
+        self.persist(&data)
+    }
+
     pub fn tunnels(&self) -> Vec<Tunnel> {
         self.data.lock().unwrap().tunnels.clone()
     }
@@ -188,8 +227,10 @@ impl Vault {
 
     pub fn save_tunnel(&self, mut tunnel: Tunnel) -> Result<Tunnel, String> {
         let mut data = self.data.lock().unwrap();
-        if !data.hosts.iter().any(|h| h.id == tunnel.host_id) {
-            return Err("host não encontrado".into());
+        match data.hosts.iter().find(|h| h.id == tunnel.host_id) {
+            None => return Err("host não encontrado".into()),
+            Some(h) if h.protocol != Protocol::Ssh => return Err("túneis precisam de um host SSH".into()),
+            Some(_) => {}
         }
         if tunnel.id.is_empty() {
             tunnel.id = uuid::Uuid::new_v4().to_string();
@@ -233,6 +274,9 @@ fn route_in(data: &VaultData, id: &str) -> Result<Route, String> {
         let host = data.hosts.iter().find(|h| h.id == next).ok_or_else(|| {
             if route.is_empty() { "host não encontrado".to_string() } else { "o jump host configurado não existe mais".to_string() }
         })?;
+        if !route.is_empty() && host.protocol != Protocol::Ssh {
+            return Err(format!("o jump host \"{}\" não é um host SSH", host.label));
+        }
         route.push((host.clone(), data.secrets.get(&host.id).cloned().unwrap_or_default()));
         if host.jump_host_id.is_empty() {
             break;

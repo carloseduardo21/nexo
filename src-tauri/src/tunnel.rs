@@ -193,7 +193,7 @@ fn describe(e: &ConnectError) -> String {
         ConnectError::NeedPassword => "o servidor pediu senha".into(),
         ConnectError::NeedPassphrase { .. } => "a chave precisa de passphrase".into(),
         ConnectError::UnknownHost { .. } => "host não confiado".into(),
-        ConnectError::HostKeyChanged { .. } => "a chave do servidor mudou".into(),
+        ConnectError::HostKeyChanged { .. } | ConnectError::CertChanged { .. } => "a chave do servidor mudou".into(),
     }
 }
 
@@ -380,8 +380,7 @@ mod live {
             username: "nexo".into(),
             auth: AuthMethod::Password,
             key_path: String::new(),
-            group: String::new(),
-            jump_host_id: String::new(),
+            ..Default::default()
         };
         (host, Secret { password: Some("nexo123".into()), passphrase: None })
     }

@@ -25,6 +25,23 @@ tauri-plugin-opener = "2.7.2"
 keyring = "4.2.0"
 chacha20poly1305 = "0.11.0"
 uuid = { version = "1.29.0", features = ["v4"] }
+sha2 = "0.10"
+x509-cert = { version = "0.3", default-features = false, features = ["std"] }
+# RDP (IronRDP). Mesmo conjunto de versões em todas as crates: elas compartilham tipos.
+ironrdp-connector = "0.11"
+ironrdp-session = "0.12"
+ironrdp-tokio = "0.11"
+ironrdp-tls = { version = "0.3", features = ["rustls-ring"] }
+ironrdp-graphics = "0.10"
+ironrdp-pdu = "0.10"
+ironrdp-core = "0.3"
+ironrdp-dvc = "0.9"
+ironrdp-svc = "0.9"
+ironrdp-displaycontrol = "0.9"
+ironrdp-input = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_Input_KeyboardAndMouse"] }
 
 # Dependências (russh, crypto, tokio) otimizadas mesmo no `tauri dev`: o primeiro build
 # demora mais, mas o app em desenvolvimento fica com o desempenho real.

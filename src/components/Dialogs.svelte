@@ -53,12 +53,37 @@
       <dt>{d.keyType}</dt>
       <dd>{d.fingerprint}</dd>
     </dl>
-    <p class="muted">Ao confiar, a chave é gravada no ~/.ssh/known_hosts (o mesmo do OpenSSH).</p>
+    {#if d.host.protocol === 'rdp'}
+      <p class="muted">Servidores xRDP costumam usar certificado autoassinado. Ao confiar, o Nexo lembra deste certificado e avisa se ele mudar.</p>
+    {:else}
+      <p class="muted">Ao confiar, a chave é gravada no ~/.ssh/known_hosts (o mesmo do OpenSSH).</p>
+    {/if}
     <div class="buttons">
       <span class="spacer"></span>
       <button onclick={() => closeDialog(false)}>Cancelar</button>
       <!-- svelte-ignore a11y_autofocus -->
       <button class="primary" autofocus onclick={() => closeDialog(true)}>Confiar e conectar</button>
+    </div>
+  </Modal>
+{:else if app.dialog?.type === 'certChanged'}
+  {@const d = app.dialog}
+  <Modal title="Certificado do servidor mudou" width={480}>
+    <div class="notice danger">
+      <Icon name="shield" size={20} />
+      <p>
+        O certificado de <strong>{d.host.hostname}:{d.host.port}</strong> não é o mesmo da última conexão. Pode ser uma
+        reinstalação do servidor (o xRDP gera um certificado novo) ou alguém interceptando a conexão.
+      </p>
+    </div>
+    <dl class="fingerprint">
+      <dt>Novo certificado (SHA-256)</dt>
+      <dd>{d.fingerprint}</dd>
+    </dl>
+    <div class="buttons">
+      <span class="spacer"></span>
+      <!-- svelte-ignore a11y_autofocus -->
+      <button autofocus onclick={() => closeDialog(false)}>Cancelar</button>
+      <button class="danger" onclick={() => closeDialog(true)}>Confiar no novo certificado</button>
     </div>
   </Modal>
 {:else if app.dialog?.type === 'secret'}

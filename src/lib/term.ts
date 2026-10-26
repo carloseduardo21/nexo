@@ -4,7 +4,9 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { asFailure, backend, type ConnectError, type ConnectFailure, type HostView, type RouteOptions, type ShellProfile } from './backend';
 
-export type PaneSpec = { kind: 'local'; profile: ShellProfile } | { kind: 'ssh'; host: HostView };
+/** O que um painel mostra: terminal (local ou SSH) ou área de trabalho RDP (`rdp.ts`). */
+export type TermSpec = { kind: 'local'; profile: ShellProfile } | { kind: 'ssh'; host: HostView };
+export type PaneSpec = TermSpec | { kind: 'rdp'; host: HostView };
 
 /** Acks em lotes: o backend só pausa a leitura acima de 2 MB pendentes, então folga de 32 KB é irrelevante. */
 const ACK_BATCH = 32 * 1024;
@@ -82,7 +84,7 @@ export class TermPane {
   private swallowKey = '';
 
   constructor(
-    readonly spec: PaneSpec,
+    readonly spec: TermSpec,
     private cb: TermCallbacks,
   ) {
     this.host.className = 'term-host';
@@ -311,6 +313,7 @@ function describeError(error: ConnectError): string {
       return 'Conexão cancelada: host não confiado.';
     case 'hostKeyChanged':
       return `ATENÇÃO: a chave do servidor mudou (${error.keyType} ${error.fingerprint}). Possível ataque man-in-the-middle. Se a mudança é esperada, remova a linha ${error.line} do ~/.ssh/known_hosts.`;
+    case 'certChanged':
     case 'needPassword':
     case 'needPassphrase':
       return 'Conexão cancelada.';

@@ -12,9 +12,10 @@ import {
 } from './backend';
 import { leaves, removeLeaf, splitLeaf, type PaneNode, type SplitDir, type SplitNode } from './layout';
 import { toggleSftp } from './sftp.svelte';
+import { RdpPane } from './rdp';
 import { TermPane, type PaneSpec } from './term';
 
-export type PaneKind = ShellProfile['kind'] | 'ssh';
+export type PaneKind = ShellProfile['kind'] | 'ssh' | 'rdp';
 
 export interface PaneMeta {
   title: string;
@@ -40,6 +41,7 @@ export interface Tab {
 export type Dialog =
   | { type: 'hostForm'; host: HostView | null }
   | { type: 'hostKey'; host: HostView; fingerprint: string; keyType: string }
+  | { type: 'certChanged'; host: HostView; fingerprint: string }
   | { type: 'secret'; host: HostView; field: 'password' | 'passphrase'; keyPath?: string; error?: string }
   | { type: 'prompt'; title: string; label: string; value: string; confirm: string }
   | { type: 'confirm'; title: string; message: string; confirm: string; danger?: boolean }
@@ -59,7 +61,7 @@ export const app = $state({
 });
 
 // Fora do estado reativo de propósito: instâncias de terminal não devem virar proxies.
-const panes = new Map<string, TermPane>();
+const panes = new Map<string, TermPane | RdpPane>();
 const paneTab = new Map<string, string>();
 
 let seq = 0;
@@ -70,7 +72,14 @@ export const activeTab = () => app.tabs.find((t) => t.id === app.activeTab);
 const tabById = (id: string | undefined) => app.tabs.find((t) => t.id === id);
 
 export const localSpec = (profile: ShellProfile): PaneSpec => ({ kind: 'local', profile });
-export const sshSpec = (host: HostView): PaneSpec => ({ kind: 'ssh', host: $state.snapshot(host) });
+/** Painel de um host salvo: terminal SSH ou área de trabalho RDP. */
+export const hostSpec = (host: HostView): PaneSpec => ({ kind: host.protocol === 'rdp' ? 'rdp' : 'ssh', host: $state.snapshot(host) });
+
+/** Spec para um painel novo "igual" ao focado (nova aba, dividir). Uma segunda sessão RDP derrubaria a primeira. */
+function cloneSpec(paneId: string | undefined): PaneSpec | undefined {
+  const spec = paneId ? app.meta[paneId]?.spec : undefined;
+  return spec?.kind === 'rdp' ? app.profiles[0] && localSpec(app.profiles[0]) : spec;
+}
 
 export async function init() {
   void backend.onTunnelStatus(({ id, status }) => {
@@ -89,10 +98,29 @@ export async function init() {
 
 function createPane(spec: PaneSpec, tabId: string): string {
   const id = uid('p');
-  const title = spec.kind === 'ssh' ? spec.host.label : spec.profile.name;
-  const kind = spec.kind === 'ssh' ? 'ssh' : spec.profile.kind;
+  const title = spec.kind === 'local' ? spec.profile.name : spec.host.label;
+  const kind = spec.kind === 'local' ? spec.profile.kind : spec.kind;
   app.meta[id] = { title, spec, kind, exited: false, muted: false, latency: {}, sessionId: null, passwordPrompt: null };
   paneTab.set(id, tabId);
+  if (spec.kind === 'rdp') {
+    panes.set(
+      id,
+      new RdpPane(spec, {
+        onFocus: () => setFocus(id),
+        onSession: (sessionId) => {
+          if (!app.meta[id]) return;
+          app.meta[id].sessionId = sessionId;
+          if (sessionId !== null) app.meta[id].exited = false;
+        },
+        onExit: () => {
+          if (app.meta[id]) app.meta[id].exited = true;
+        },
+        resolveSsh,
+        hostLabel: (hostId) => app.hosts.find((h) => h.id === hostId)?.label,
+      }),
+    );
+    return id;
+  }
   panes.set(
     id,
     new TermPane(spec, {
@@ -125,7 +153,7 @@ function createPane(spec: PaneSpec, tabId: string): string {
 /** Caminho quente: cada tecla passa por aqui. */
 function sendInput(paneId: string, data: string) {
   const pane = panes.get(paneId);
-  if (!pane) return;
+  if (!(pane instanceof TermPane)) return;
   if (pane.exited) {
     if (data !== '\r') return;
     if (pane.spec.kind === 'ssh') {
@@ -159,7 +187,7 @@ export function newTab(spec: PaneSpec | undefined = app.profiles[0] && localSpec
 export function split(dir: SplitDir) {
   const tab = activeTab();
   if (!tab) return;
-  const spec = app.meta[tab.focused]?.spec ?? localSpec(app.profiles[0]);
+  const spec = cloneSpec(tab.focused) ?? localSpec(app.profiles[0]);
   const id = createPane(spec, tab.id);
   tab.root = splitLeaf(tab.root, tab.focused, dir, id);
   tab.focused = id;
@@ -328,7 +356,7 @@ export async function deleteHost(id: string) {
 }
 
 export function connectHost(host: HostView) {
-  newTab(sshSpec(host));
+  newTab(hostSpec(host));
 }
 
 // ---------- Túneis ----------
@@ -425,6 +453,10 @@ async function resolveHost(error: ConnectFailure, host: HostView, options: Conne
       const ok = await openDialog<boolean>({ type: 'hostKey', host, fingerprint: error.fingerprint, keyType: error.keyType });
       return ok ? { ...options, trustFingerprint: error.fingerprint } : null;
     }
+    case 'certChanged': {
+      const ok = await openDialog<boolean>({ type: 'certChanged', host, fingerprint: error.fingerprint });
+      return ok ? { ...options, trustFingerprint: error.fingerprint } : null;
+    }
     case 'needPassword':
     case 'needPassphrase':
     case 'authFailed': {
@@ -457,7 +489,7 @@ export function handleShortcut(e: KeyboardEvent) {
 
   if (e.ctrlKey && e.shiftKey && !e.altKey) {
     switch (e.code) {
-      case 'KeyT': newTab(focused ? app.meta[focused]?.spec : undefined); break;
+      case 'KeyT': newTab(cloneSpec(focused)); break;
       case 'KeyW': if (focused) closePane(focused); break;
       case 'KeyD': split('row'); break;
       case 'KeyE': split('col'); break;

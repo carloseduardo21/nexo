@@ -13,6 +13,7 @@ use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Manager, State};
 
 use crate::local;
+use crate::rdp;
 use crate::session::{Session, SessionManager};
 use crate::sftp::{self, Transfers};
 use crate::shells::{self, ShellProfile};
@@ -63,6 +64,42 @@ pub async fn ssh_connect(
     sessions.insert(id, Arc::new(session));
     remember_secrets(&vault, &options);
     Ok(id)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn rdp_connect(
+    app: AppHandle,
+    sessions: State<'_, SessionManager>,
+    vault: State<'_, Vault>,
+    host_id: String,
+    options: Options,
+    width: u16,
+    height: u16,
+    on_frame: Channel<InvokeResponseBody>,
+    on_exit: Channel<Option<String>>,
+) -> Result<u32, Failure> {
+    let route = vault.route(&host_id).map_err(|e| Failure::other(&host_id, e))?;
+    let host = &route.last().ok_or_else(|| Failure::other(&host_id, "host não encontrado"))?.0;
+    let endpoint = format!("{}:{}", host.hostname, host.port);
+    let id = sessions.next_id();
+    let (session, new_cert) = rdp::connect(app, id, &route, &options, vault.rdp_cert(&endpoint), width, height, on_frame, on_exit).await?;
+    sessions.insert(id, Arc::new(session));
+    if let Some(fingerprint) = new_cert {
+        let _ = vault.trust_rdp_cert(&endpoint, &fingerprint);
+    }
+    remember_secrets(&vault, &options);
+    Ok(id)
+}
+
+/// Teclado e mouse de um painel RDP (em lotes: o frontend junta os eventos de cada quadro).
+#[tauri::command]
+pub fn rdp_input(sessions: State<'_, SessionManager>, id: u32, events: Vec<rdp::Input>) {
+    if let Some(session) = sessions.get(id) {
+        if let Some(rdp) = session.as_rdp() {
+            rdp.input(events);
+        }
+    }
 }
 
 /// Senha/passphrase digitada num prompt com "salvar no cofre" marcado: grava depois que deu certo

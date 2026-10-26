@@ -59,7 +59,7 @@
       </button>
     </div>
   {/if}
-  <div class="pane-body" bind:this={body}></div>
+  <div class="pane-body" class:rdp={meta?.kind === 'rdp'} bind:this={body}></div>
   {#if meta?.passwordPrompt && focused && app.activeTab === tabId}
     {@const prompt = meta.passwordPrompt}
     <div
