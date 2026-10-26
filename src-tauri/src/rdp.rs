@@ -32,6 +32,7 @@ use tauri::{AppHandle, Manager};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 
+use crate::rdp_clipboard::{self, Clipboard};
 use crate::session::{Session, SessionManager};
 use crate::ssh::{self, ConnectError, ConnectOptions, Connection, Failure, Options, Route};
 use crate::vault::{Host, Secret};
@@ -71,6 +72,8 @@ pub enum Input {
     Sync { caps: bool, num: bool, scroll: bool },
     /// Solta tudo que estiver pressionado (ao perder o foco: evita tecla "presa" no servidor).
     ReleaseAll,
+    /// O painel ganhou o foco: anuncia ao servidor o texto copiado aqui, se mudou.
+    ClipboardSync,
 }
 
 enum Command {
@@ -87,6 +90,11 @@ pub struct RdpSession {
 impl RdpSession {
     pub fn input(&self, events: Vec<Input>) {
         let _ = self.commands.send(Command::Input(events));
+    }
+
+    /// A sessão terminou (o laço dela não recebe mais comandos).
+    pub fn is_closed(&self) -> bool {
+        self.commands.is_closed()
     }
 }
 
@@ -123,6 +131,8 @@ struct Target {
     cert: Option<String>,
     trust: Option<String>,
     gateway: Option<Arc<Connection>>,
+    /// Eventos do canal de área de transferência (o backend é recriado a cada conexão).
+    clipboard: mpsc::UnboundedSender<rdp_clipboard::Event>,
 }
 
 /// Conecta e autentica. Devolve a sessão e, se o usuário acabou de confiar no certificado
@@ -149,12 +159,14 @@ pub async fn connect(
         [] => None,
         jumps => Some(Arc::new(ssh::establish(jumps, opts).await?)),
     };
+    let (clipboard, clipboard_rx) = mpsc::unbounded_channel();
     let mut target = Target {
         host: target_host.clone(),
         password,
         cert: trusted_cert.clone(),
         trust: target_opts.trust_fingerprint.clone(),
         gateway,
+        clipboard,
     };
 
     // Os futures do IronRDP não são `Send` (não podem ir para o runtime do Tauri): cada sessão
@@ -176,7 +188,7 @@ pub async fn connect(
                 match open(&mut target, size).await {
                     Ok((result, framed)) => {
                         let _ = opened_tx.send(Ok(target.cert.clone()));
-                        let reason = run(&mut target, result, framed, command_rx, &on_frame).await;
+                        let reason = run(&mut target, result, framed, command_rx, clipboard_rx, &on_frame).await;
                         app.state::<SessionManager>().remove(id);
                         let _ = on_exit.send(reason);
                     }
@@ -203,10 +215,13 @@ async fn run(
     mut result: ConnectionResult,
     mut framed: Framed,
     mut commands: mpsc::UnboundedReceiver<Command>,
+    mut clip_events: mpsc::UnboundedReceiver<rdp_clipboard::Event>,
     on_frame: &Channel<InvokeResponseBody>,
 ) -> Option<String> {
+    let mut clipboard = Clipboard::new();
     loop {
-        match active_session(result, framed, &mut commands, on_frame).await {
+        let channels = Channels { commands: &mut commands, clip_events: &mut clip_events, clipboard: &mut clipboard };
+        match active_session(result, framed, channels, on_frame).await {
             Ok(End::Closed) => return None,
             Ok(End::Disconnected(reason)) => return describe_disconnect(reason),
             Ok(End::Resize(size)) => match open(target, size).await {
@@ -267,7 +282,11 @@ async fn open(target: &mut Target, size: DesktopSize) -> Result<(ConnectionResul
     // Endereço do cliente só aparece em logs do servidor; atrás de um gateway não há um real.
     let client_addr = "127.0.0.1:0".parse().expect("endereço fixo");
     let drdynvc = ironrdp_dvc::DrdynvcClient::new().with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new())));
-    let connector = ClientConnector::new(config, client_addr).with_static_channel(drdynvc);
+    let mut connector = ClientConnector::new(config, client_addr).with_static_channel(drdynvc);
+    if host.rdp.clipboard {
+        let backend = rdp_clipboard::Backend::new(target.clipboard.clone());
+        connector.attach_static_channel(ironrdp_cliprdr::CliprdrClient::new(Box::new(backend)));
+    }
 
     let attempt = handshake(stream, connector, host.hostname.clone(), target.cert.clone(), target.trust.clone());
     let (result, framed, fingerprint) = tokio::time::timeout(CONNECT_TIMEOUT * 2, attempt)
@@ -417,6 +436,13 @@ fn keyboard_layout() -> u32 {
     }
 }
 
+/// Entradas da sessão que sobrevivem às reconexões.
+struct Channels<'a> {
+    commands: &'a mut mpsc::UnboundedReceiver<Command>,
+    clip_events: &'a mut mpsc::UnboundedReceiver<rdp_clipboard::Event>,
+    clipboard: &'a mut Clipboard,
+}
+
 enum End {
     Closed,
     Disconnected(GracefulDisconnectReason),
@@ -525,7 +551,7 @@ fn to_operations(events: Vec<Input>, sync: &mut Option<(bool, bool, bool)>) -> V
                 ops.push(Operation::WheelRotations(WheelRotations { is_vertical: vertical, rotation_units: delta }))
             }
             Input::Sync { caps, num, scroll } => *sync = Some((caps, num, scroll)),
-            Input::ReleaseAll => {}
+            Input::ReleaseAll | Input::ClipboardSync => {}
         }
     }
     ops
@@ -534,9 +560,12 @@ fn to_operations(events: Vec<Input>, sync: &mut Option<(bool, bool, bool)>) -> V
 async fn active_session(
     result: ConnectionResult,
     framed: Framed,
-    commands: &mut mpsc::UnboundedReceiver<Command>,
+    channels: Channels<'_>,
     on_frame: &Channel<InvokeResponseBody>,
 ) -> Result<End, String> {
+    let Channels { commands, clip_events, clipboard } = channels;
+    // Expiração dos bloqueios do canal de área de transferência.
+    let mut clip_timer = tokio::time::interval(Duration::from_secs(5));
     let (mut reader, mut writer) = split_tokio_framed(framed);
     let mut image = DecodedImage::new(PixelFormat::RgbA32, result.desktop_size.width, result.desktop_size.height);
     let activation_factory = result.activation_factory;
@@ -571,6 +600,25 @@ async fn active_session(
                     }
                 }
                 outputs
+            }
+            event = clip_events.recv() => {
+                let Some(event) = event else { continue };
+                let messages = stage.get_svc_processor_mut::<ironrdp_cliprdr::CliprdrClient>().and_then(|c| clipboard.handle(event, c));
+                if let Some(messages) = messages {
+                    let frame = stage.process_svc_processor_messages(messages).map_err(|e| e.report().to_string())?;
+                    writer.write_all(&frame).await.map_err(|e| e.to_string())?;
+                }
+                continue;
+            }
+            _ = clip_timer.tick() => {
+                let messages = stage.get_svc_processor_mut::<ironrdp_cliprdr::CliprdrClient>().and_then(|c| c.drive_timeouts().ok());
+                if let Some(messages) = messages {
+                    let frame = stage.process_svc_processor_messages(messages).map_err(|e| e.report().to_string())?;
+                    if !frame.is_empty() {
+                        writer.write_all(&frame).await.map_err(|e| e.to_string())?;
+                    }
+                }
+                continue;
             }
             command = commands.recv() => match command {
                 None | Some(Command::Close) => {
@@ -638,6 +686,13 @@ async fn active_session(
                     }
                 }
                 Some(Command::Input(events)) => {
+                    if events.iter().any(|e| matches!(e, Input::ClipboardSync)) {
+                        let messages = stage.get_svc_processor_mut::<ironrdp_cliprdr::CliprdrClient>().and_then(|c| clipboard.local_changed(c));
+                        if let Some(messages) = messages {
+                            let frame = stage.process_svc_processor_messages(messages).map_err(|e| e.report().to_string())?;
+                            writer.write_all(&frame).await.map_err(|e| e.to_string())?;
+                        }
+                    }
                     let release = events.iter().any(|e| matches!(e, Input::ReleaseAll));
                     let mut sync = None;
                     let ops = to_operations(events, &mut sync);
@@ -714,8 +769,9 @@ fn encode_resize(stage: &mut ActiveStage, w: u16, h: u16) -> Option<Result<Vec<u
     stage.encode_resize(w.into(), h.into(), None, None).map(|r| r.map_err(|e| e.report().to_string()))
 }
 
-/// Contra um xRDP real: `docker run -d -p 13389:3389 nexo-xrdp` (Debian + xrdp + xorgxrdp,
-/// usuário nexo/nexo123) e `cargo test -- --ignored live`.
+/// Contra um xRDP real: `docker build -t nexo-xrdp docker/xrdp`, depois
+/// `docker run -d --name nexo-xrdp -p 13389:3389 nexo-xrdp` (Debian + xrdp + xorgxrdp, usuário nexo/nexo123) e `cargo test -- --ignored live_rdp --test-threads=1` (um de cada vez: o
+/// xRDP entrega a sessão do usuário à conexão mais nova e derruba a anterior).
 #[cfg(test)]
 mod live {
     use super::*;
@@ -731,7 +787,8 @@ mod live {
             protocol: crate::vault::Protocol::Rdp,
             ..Default::default()
         };
-        Target { host, password: "nexo123".into(), cert: None, trust: None, gateway: None }
+        let (clipboard, _) = mpsc::unbounded_channel();
+        Target { host, password: "nexo123".into(), cert: None, trust: None, gateway: None, clipboard }
     }
 
     /// Remonta a tela a partir das mensagens: `w h` (u16) + RGBA.
@@ -770,6 +827,8 @@ mod live {
     #[ignore]
     async fn live_rdp() {
         let mut target = target();
+        let (clip_tx, clip_rx) = mpsc::unbounded_channel();
+        target.clipboard = clip_tx;
         // Primeira conexão: certificado desconhecido.
         let fingerprint = match open(&mut target, DesktopSize { width: 1024, height: 768 }).await {
             Err(ConnectError::UnknownHost { fingerprint, .. }) => fingerprint,
@@ -830,7 +889,7 @@ mod live {
             seen
         });
 
-        let end = run(&mut target, result, framed, command_rx, &on_frame).await;
+        let end = run(&mut target, result, framed, command_rx, clip_rx, &on_frame).await;
         let seen = driver.await.unwrap();
         assert!(seen.contains(&(1280, 720)), "resolução não mudou: {seen:?}");
         assert_eq!(end, None, "sessão terminou com erro");
@@ -862,6 +921,8 @@ mod live {
             }
         };
         let mut target = target();
+        let (clip_tx, clip_rx) = mpsc::unbounded_channel();
+        target.clipboard = clip_tx;
         target.host.hostname = "nexo-xrdp".into();
         target.host.port = 3389;
         target.gateway = Some(Arc::new(conn));
@@ -897,9 +958,75 @@ mod live {
             commands.send(Command::Close).unwrap();
             n
         });
-        let end = run(&mut target, result, framed, command_rx, &on_frame).await;
+        let end = run(&mut target, result, framed, command_rx, clip_rx, &on_frame).await;
         assert!(driver.await.unwrap() > 0, "nenhuma imagem pelo gateway");
         assert_eq!(end, None);
         target.gateway.take().unwrap().close().await;
+    }
+
+    /// Roda um comando no container do xRDP (os testes rodam no Windows; o Docker, no WSL).
+    fn in_container(script: &str) -> String {
+        let out = std::process::Command::new("wsl")
+            .args(["docker", "exec", "-u", "nexo", "-e", "DISPLAY=:10", "nexo-xrdp", "sh", "-c", script])
+            .output()
+            .expect("wsl docker exec");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    /// Área de transferência nos dois sentidos (usa o clipboard real desta máquina; o conteúdo é restaurado).
+    #[tokio::test]
+    #[ignore]
+    async fn live_rdp_clipboard() {
+        let mut os = arboard::Clipboard::new().unwrap();
+        let saved = os.get_text().ok();
+
+        let mut target = target();
+        let (clip_tx, clip_rx) = mpsc::unbounded_channel();
+        target.clipboard = clip_tx;
+        let fingerprint = match open(&mut target, DesktopSize { width: 800, height: 600 }).await {
+            Err(ConnectError::UnknownHost { fingerprint, .. }) => fingerprint,
+            _ => panic!("esperava certificado desconhecido"),
+        };
+        target.trust = Some(fingerprint);
+        let (result, framed) = open(&mut target, DesktopSize { width: 800, height: 600 }).await.unwrap_or_else(|e| panic!("{}", describe_connect_error(&e)));
+        let (commands, command_rx) = mpsc::unbounded_channel();
+        let acks = commands.clone();
+        let on_frame = Channel::new(move |body| {
+            if let InvokeResponseBody::Raw(bytes) = body {
+                if bytes[0] == MSG_RECTS {
+                    let _ = acks.send(Command::Ack);
+                }
+            }
+            Ok(())
+        });
+
+        let driver = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            // Local → servidor.
+            arboard::Clipboard::new().unwrap().set_text("nexo-local-123").unwrap();
+            commands.send(Command::Input(vec![Input::ClipboardSync])).unwrap();
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            let remote = tokio::task::spawn_blocking(|| in_container("timeout 3 xclip -selection clipboard -o")).await.unwrap();
+            // Servidor → local.
+            tokio::task::spawn_blocking(|| in_container("printf nexo-remote-456 | xclip -selection clipboard -loops 2 >/dev/null 2>&1 &")).await.unwrap();
+            let mut local = String::new();
+            for _ in 0..30 {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                local = arboard::Clipboard::new().unwrap().get_text().unwrap_or_default();
+                if local == "nexo-remote-456" {
+                    break;
+                }
+            }
+            commands.send(Command::Close).unwrap();
+            (remote, local)
+        });
+        let end = run(&mut target, result, framed, command_rx, clip_rx, &on_frame).await;
+        let (remote, local) = driver.await.unwrap();
+        if let Some(saved) = saved {
+            let _ = os.set_text(saved);
+        }
+        assert_eq!(end, None);
+        assert_eq!(remote, "nexo-local-123", "texto local não chegou ao servidor");
+        assert_eq!(local, "nexo-remote-456", "texto do servidor não chegou aqui");
     }
 }

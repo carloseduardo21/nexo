@@ -41,7 +41,7 @@ pub enum Protocol {
 }
 
 /// Opções de hosts RDP (usuário e senha são os campos comuns do host).
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct RdpSettings {
     pub domain: String,
@@ -50,6 +50,16 @@ pub struct RdpSettings {
     pub height: u16,
     /// Resolução em pixels físicos da tela (nítido em telas com escala; a fonte remota fica menor).
     pub hidpi: bool,
+    /// Área de transferência compartilhada com o servidor (texto).
+    pub clipboard: bool,
+    /// Atalhos do sistema (Win, Alt+Tab…) e do Nexo vão para o servidor enquanto o painel tem foco.
+    pub capture_keys: bool,
+}
+
+impl Default for RdpSettings {
+    fn default() -> Self {
+        Self { domain: String::new(), width: 0, height: 0, hidpi: false, clipboard: true, capture_keys: true }
+    }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

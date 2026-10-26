@@ -102,6 +102,14 @@ pub fn rdp_input(sessions: State<'_, SessionManager>, id: u32, events: Vec<rdp::
     }
 }
 
+/// Captura do teclado (Win, Alt+Tab, atalhos do Nexo…) para a sessão RDP `id`; None solta.
+/// Devolve se a captura está ativa (só no Windows).
+#[tauri::command]
+pub fn rdp_capture(app: AppHandle, sessions: State<'_, SessionManager>, id: Option<u32>) -> bool {
+    let session = id.and_then(|id| sessions.get(id)).filter(|s| s.as_rdp().is_some());
+    crate::keyhook::capture(&app, session)
+}
+
 /// Senha/passphrase digitada num prompt com "salvar no cofre" marcado: grava depois que deu certo
 /// (vale para o destino e para os jump hosts).
 fn remember_secrets(vault: &Vault, options: &Options) {

@@ -1,3 +1,4 @@
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   asFailure,
   type ConnectOptions,
@@ -58,6 +59,8 @@ export const app = $state({
   tunnels: [] as Tunnel[],
   /** Só túneis ativos (ou com erro) aparecem aqui. */
   tunnelStatus: {} as Record<string, TunnelStatus>,
+  /** Painel em tela cheia ('' = nenhum). */
+  fullscreen: '',
 });
 
 // Fora do estado reativo de propósito: instâncias de terminal não devem virar proxies.
@@ -81,7 +84,20 @@ function cloneSpec(paneId: string | undefined): PaneSpec | undefined {
   return spec?.kind === 'rdp' ? app.profiles[0] && localSpec(app.profiles[0]) : spec;
 }
 
+/** Painel em tela cheia (ocupa a janela inteira, com a janela em tela cheia). */
+export async function toggleFullscreen(paneId: string) {
+  const on = app.fullscreen !== paneId;
+  app.fullscreen = on ? paneId : '';
+  if (on) setFocus(paneId);
+  await getCurrentWindow().setFullscreen(on);
+  queueMicrotask(() => panes.get(paneId)?.focus());
+}
+
 export async function init() {
+  // Ctrl+Alt+Home num painel RDP com o teclado capturado: o hook já soltou; o foco sai do painel.
+  void backend.onRdpRelease(() => {
+    for (const pane of panes.values()) if (pane instanceof RdpPane && pane.hasFocus) pane.release();
+  });
   void backend.onTunnelStatus(({ id, status }) => {
     if (status) app.tunnelStatus[id] = status;
     else delete app.tunnelStatus[id];
@@ -115,6 +131,8 @@ function createPane(spec: PaneSpec, tabId: string): string {
         onExit: () => {
           if (app.meta[id]) app.meta[id].exited = true;
         },
+        onFullscreen: () => toggleFullscreen(id),
+        onClose: () => closePane(id),
         resolveSsh,
         hostLabel: (hostId) => app.hosts.find((h) => h.id === hostId)?.label,
       }),
@@ -216,6 +234,10 @@ export function closeTab(tabId: string) {
 }
 
 function disposePane(id: string) {
+  if (app.fullscreen === id) {
+    app.fullscreen = '';
+    void getCurrentWindow().setFullscreen(false);
+  }
   panes.get(id)?.dispose();
   panes.delete(id);
   paneTab.delete(id);

@@ -1,7 +1,9 @@
 mod commands;
 mod flow;
+mod keyhook;
 mod local;
 mod rdp;
+mod rdp_clipboard;
 mod session;
 mod sftp;
 mod shells;
@@ -30,6 +32,7 @@ pub fn run() {
             commands::ssh_connect,
             commands::rdp_connect,
             commands::rdp_input,
+            commands::rdp_capture,
             commands::hosts_list,
             commands::host_save,
             commands::host_delete,

@@ -22,7 +22,7 @@
     jumpHostId: initial?.jumpHostId ?? '',
     protocol: initial?.protocol ?? ('ssh' as Protocol),
   });
-  let rdp = $state({ domain: '', width: 0, height: 0, hidpi: false, ...initial?.rdp });
+  let rdp = $state({ domain: '', width: 0, height: 0, hidpi: false, clipboard: true, captureKeys: true, ...initial?.rdp });
   let resolution = $state(rdp.width && rdp.height ? `${rdp.width}x${rdp.height}` : 'fit');
 
   function setProtocol(protocol: Protocol) {
@@ -173,6 +173,12 @@
           <input type="checkbox" bind:checked={rdp.hidpi} /> Alta resolução (pixels físicos da tela: mais nítido, letras menores)
         </label>
       {/if}
+      <label class="check">
+        <input type="checkbox" bind:checked={rdp.clipboard} /> Compartilhar área de transferência (copiar e colar texto)
+      </label>
+      <label class="check">
+        <input type="checkbox" bind:checked={rdp.captureKeys} /> Capturar todos os atalhos (Win, Alt+Tab, Alt+F4…) — Ctrl+Alt+Home libera
+      </label>
     {:else}
     <div class="segmented" role="radiogroup" aria-label="Autenticação">
       <button type="button" class:on={form.auth === 'password'} onclick={() => (form.auth = 'password')}>Senha</button>

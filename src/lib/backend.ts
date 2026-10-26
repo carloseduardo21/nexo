@@ -18,6 +18,10 @@ export interface RdpSettings {
   height: number;
   /** Resolução em pixels físicos (nítido em telas com escala; a fonte remota fica menor). */
   hidpi: boolean;
+  /** Área de transferência compartilhada (texto). */
+  clipboard: boolean;
+  /** Win, Alt+Tab e os atalhos do Nexo vão para o servidor enquanto o painel tem foco (Ctrl+Alt+Home solta). */
+  captureKeys: boolean;
 }
 
 export interface Host {
@@ -128,7 +132,8 @@ export type RdpInput =
   | { t: 'button'; button: number; down: boolean }
   | { t: 'wheel'; delta: number; vertical: boolean }
   | { t: 'sync'; caps: boolean; num: boolean; scroll: boolean }
-  | { t: 'releaseAll' };
+  | { t: 'releaseAll' }
+  | { t: 'clipboardSync' };
 
 export type DataHandler = (data: Uint8Array) => void;
 export type ExitHandler = (code: number | null) => void;
@@ -185,6 +190,9 @@ export const backend = {
     return invoke<number>('rdp_connect', { hostId, options, width, height, onFrame: frame, onExit: exit });
   },
   rdpInput: (id: number, events: RdpInput[]) => void invoke('rdp_input', { id, events }).catch(report),
+  /** Captura o teclado (hook do Windows) para a sessão; null solta. Devolve se a captura ficou ativa. */
+  rdpCapture: (id: number | null) => invoke<boolean>('rdp_capture', { id }).catch(() => false),
+  onRdpRelease: (handler: () => void) => listen('rdp-release', handler),
 
   listHosts: () => invoke<HostView[]>('hosts_list'),
   /** password/passphrase: undefined mantém o salvo, '' apaga. */

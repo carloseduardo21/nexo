@@ -39,10 +39,11 @@
   class="pane"
   class:focused={focused && isSplit}
   class:receiving
+  class:fullscreen={app.fullscreen === paneId}
   data-pane={paneId}
   role="presentation"
   onmousedown={() => setFocus(paneId)}>
-  {#if isSplit || tab?.broadcast}
+  {#if (isSplit || tab?.broadcast) && app.fullscreen !== paneId}
     <div class="pane-header">
       <span class="kind-dot kind-{meta?.kind}"></span>
       <span class="title">{meta?.title}</span>

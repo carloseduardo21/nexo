@@ -40,6 +40,10 @@ export interface RdpCallbacks {
   onFocus(): void;
   onSession(id: number | null): void;
   onExit(): void;
+  /** Liga/desliga a tela cheia deste painel. */
+  onFullscreen(): void;
+  /** Fecha o painel (botão "desconectar" da barra). */
+  onClose(): void;
   resolveSsh(error: ConnectFailure, options: RouteOptions): Promise<RouteOptions | null>;
   hostLabel(id: string): string | undefined;
 }
@@ -59,6 +63,13 @@ export class RdpPane {
   private canvas = document.createElement('canvas');
   private ctx = this.canvas.getContext('2d', { alpha: false })!;
   private status = document.createElement('div');
+  private bar = document.createElement('div');
+  private keyBadge = document.createElement('span');
+  private toast = document.createElement('div');
+  private barTimer = 0;
+  private toastTimer = 0;
+  /** Teclado capturado pelo hook do Windows (todas as teclas vão direto do Rust para o servidor). */
+  private captured = false;
   private started = false;
   private connecting = false;
   /** Acks de mensagens desenhadas antes de o backend devolver o id da sessão. */
@@ -81,8 +92,106 @@ export class RdpPane {
     this.canvas.className = 'rdp-canvas';
     this.canvas.hidden = true;
     this.status.className = 'rdp-status';
-    this.host.append(this.canvas, this.status);
+    this.toast.className = 'rdp-toast';
+    this.toast.hidden = true;
+    this.buildBar();
+    this.host.append(this.canvas, this.status, this.bar, this.toast);
     this.bindInput();
+  }
+
+  /** Barra de conexão (como a do mstsc): aparece com o mouse na borda de cima. */
+  private buildBar() {
+    this.bar.className = 'rdp-bar';
+    const title = document.createElement('span');
+    title.className = 'rdp-bar-title';
+    title.textContent = this.spec.host.label;
+    this.keyBadge.className = 'rdp-key';
+    const button = (label: string, hint: string, action: () => void) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.title = hint;
+      b.tabIndex = -1;
+      // Não tira o foco do painel (perderia a captura do teclado).
+      b.onmousedown = (e) => e.preventDefault();
+      b.onclick = action;
+      return b;
+    };
+    this.bar.append(
+      title,
+      this.keyBadge,
+      button('Ctrl+Alt+Del', 'Enviar Ctrl+Alt+Del ao servidor', () => this.sendCtrlAltDel()),
+      button('Tela cheia', 'Alternar tela cheia', () => this.cb.onFullscreen()),
+      button('Desconectar', 'Encerrar a sessão e fechar o painel', () => this.cb.onClose()),
+    );
+    this.bar.onmouseenter = () => clearTimeout(this.barTimer);
+    this.bar.onmouseleave = () => this.hideBar(600);
+    this.updateKeyBadge();
+  }
+
+  private showBar(ms = 0) {
+    clearTimeout(this.barTimer);
+    this.bar.classList.add('visible');
+    if (ms) this.hideBar(ms);
+  }
+
+  private hideBar(delay: number) {
+    clearTimeout(this.barTimer);
+    this.barTimer = window.setTimeout(() => this.bar.classList.remove('visible'), delay);
+  }
+
+  private updateKeyBadge() {
+    const capture = this.spec.host.rdp.captureKeys;
+    this.keyBadge.hidden = !capture;
+    this.keyBadge.classList.toggle('on', this.captured);
+    this.keyBadge.textContent = this.captured ? 'Teclado capturado' : 'Teclado livre';
+    this.keyBadge.title = this.captured
+      ? 'Todas as teclas (Win, Alt+Tab, atalhos do Nexo) vão para o servidor.\nCtrl+Alt+Home libera.'
+      : 'Clique na tela remota para capturar o teclado.';
+  }
+
+  private showToast(message: string) {
+    this.toast.textContent = message;
+    this.toast.hidden = false;
+    clearTimeout(this.toastTimer);
+    this.toastTimer = window.setTimeout(() => (this.toast.hidden = true), 2800);
+  }
+
+  private sendCtrlAltDel() {
+    const keys = [SCANCODES.ControlLeft, SCANCODES.AltLeft, SCANCODES.Delete];
+    this.send({ t: 'releaseAll' });
+    for (const code of keys) this.queue.push({ t: 'key', code, down: true });
+    for (const code of [...keys].reverse()) this.queue.push({ t: 'key', code, down: false });
+    this.flush();
+    this.focus();
+  }
+
+  /** Captura (ou solta) o teclado no Windows, conforme o foco. */
+  private async setCapture(on: boolean) {
+    if (!this.spec.host.rdp.captureKeys) return;
+    if (on && this.sessionId !== null) {
+      this.captured = await backend.rdpCapture(this.sessionId);
+      // O foco pode ter saído enquanto a captura era ligada.
+      if (this.captured && document.activeElement !== this.host) {
+        this.captured = false;
+        void backend.rdpCapture(null);
+      }
+    } else if (this.captured) {
+      this.captured = false;
+      void backend.rdpCapture(null);
+    }
+    this.updateKeyBadge();
+  }
+
+  /** Ctrl+Alt+Home: o hook soltou o teclado; o foco sai do painel e os atalhos do Nexo voltam. */
+  release() {
+    this.captured = false;
+    this.updateKeyBadge();
+    this.host.blur();
+    this.showToast('Teclado liberado. Clique na tela remota para capturar de novo.');
+  }
+
+  get hasFocus() {
+    return document.activeElement === this.host;
   }
 
   attach(container: HTMLElement) {
@@ -119,6 +228,8 @@ export class RdpPane {
         this.cb.onSession(this.sessionId);
         // O painel pode ter mudado de tamanho durante a conexão.
         this.scheduleResize();
+        if (this.hasFocus) void this.setCapture(true);
+        this.showBar(2500);
         return;
       } catch (err) {
         const error = asFailure(err, host.id);
@@ -177,6 +288,7 @@ export class RdpPane {
   private onExit = (reason: string | null) => this.finish(reason ? `Sessão encerrada: ${reason}` : 'Sessão encerrada.');
 
   private finish(message: string) {
+    void this.setCapture(false);
     this.exited = true;
     this.sessionId = null;
     this.cb.onSession(null);
@@ -267,13 +379,16 @@ export class RdpPane {
     this.host.focus({ preventScroll: true });
   }
 
-  // Área de transferência chega na próxima etapa (canal CLIPRDR).
+  // A área de transferência é sincronizada automaticamente (canal CLIPRDR): Ctrl+C/Ctrl+V do servidor bastam.
   async copy() {}
   async paste() {}
   dismissPrompt() {}
 
   dispose() {
+    void this.setCapture(false);
     clearTimeout(this.resizeTimer);
+    clearTimeout(this.barTimer);
+    clearTimeout(this.toastTimer);
     cancelAnimationFrame(this.moveFrame);
     if (this.sessionId !== null) backend.kill(this.sessionId);
     this.host.remove();
@@ -313,6 +428,8 @@ export class RdpPane {
   private bindInput() {
     const c = this.canvas;
     c.addEventListener('pointermove', (e) => {
+      // Borda de cima mostra a barra de conexão.
+      if (e.clientY - this.host.getBoundingClientRect().top < 6 && e.buttons === 0) this.showBar(1500);
       this.pendingMove = this.point(e);
       // Movimentos são agrupados por quadro; cliques e teclas saem na hora (levando o último movimento).
       if (!this.moveFrame) {
@@ -360,9 +477,14 @@ export class RdpPane {
     this.host.addEventListener('focus', () => {
       this.needSync = true;
       this.cb.onFocus();
+      if (this.sessionId === null) return;
+      // O que foi copiado em outro programa fica disponível para colar no servidor.
+      if (this.spec.host.rdp.clipboard) this.send({ t: 'clipboardSync' });
+      void this.setCapture(true);
     });
     this.host.addEventListener('blur', () => {
       if (this.sessionId !== null) this.send({ t: 'releaseAll' });
+      void this.setCapture(false);
     });
   }
 

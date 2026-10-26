@@ -39,9 +39,17 @@ ironrdp-dvc = "0.9"
 ironrdp-svc = "0.9"
 ironrdp-displaycontrol = "0.9"
 ironrdp-input = "0.8"
+ironrdp-cliprdr = "0.8"
+arboard = { version = "3.7", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_UI_Input_KeyboardAndMouse"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 # Dependências (russh, crypto, tokio) otimizadas mesmo no `tauri dev`: o primeiro build
 # demora mais, mas o app em desenvolvimento fica com o desempenho real.

@@ -79,6 +79,13 @@ npm run tauri build
 - Resolução acompanha o painel (ao vivo no xRDP 0.10+/Windows; reconecta em servidores antigos)
   ou fixa. "Alta resolução" usa os pixels físicos da tela.
 - Teclado por scancode: o layout é o do servidor (o Nexo informa o layout do Windows, ex.: ABNT2).
+- **Captura de atalhos** (Windows, ligada por padrão): com o painel RDP focado, *todas* as teclas vão
+  para o servidor — Win, Alt+Tab, Alt+F4, Ctrl+Esc e os atalhos do próprio Nexo. **Ctrl+Alt+Home**
+  solta o teclado; clicar na tela remota captura de novo. Ctrl+Alt+Del e Win+L o Windows não deixa
+  capturar: use o botão da barra de conexão.
+- **Área de transferência** (texto, nos dois sentidos): copiou no servidor, já está no Windows;
+  copiou no Windows, fica disponível no servidor quando o painel ganha o foco.
+- **Barra de conexão**: leve o mouse à borda de cima do painel — Ctrl+Alt+Del, tela cheia, desconectar.
 - Painel encerrado: `Enter` ou o botão reconecta.
 
 ## Arquitetura
