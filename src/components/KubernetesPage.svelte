@@ -20,6 +20,8 @@
   import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
   import {
     KIND_GROUPS,
+    customKey,
+    listKey,
     actionsFor,
     forwards,
     loadForwards,
@@ -37,27 +39,49 @@
   } from '../lib/k8s.svelte';
   import { settings, updateSettings } from '../lib/settings.svelte';
   import { cn } from '$lib/utils.js';
+  import { formatBytes } from '../lib/ui';
+  import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+  import type { KubeCustom } from '../lib/backend';
 
   let query = $state('');
+  /** Grupos de custom resources abertos na barra (o do escolhido abre sozinho). */
+  let openGroups = $state<Record<string, boolean>>({});
+  const customGroups = $derived.by(() => {
+    const map = new Map<string, KubeCustom[]>();
+    for (const c of k8s.customs) map.set(c.group, [...(map.get(c.group) ?? []), c]);
+    return [...map];
+  });
   let sort = $state<{ column: number; desc: boolean } | null>(null);
 
   const context = $derived(k8s.config?.contexts.find((c) => c.name === k8s.context));
   const info = $derived(kindInfo(k8s.kind));
   const allNamespaces = $derived(info.namespaced && !k8s.namespace);
-  const table = $derived(k8s.table);
+  // Só a lista do que está escolhido (a anterior some ao trocar de tipo/namespace).
+  const table = $derived(k8s.tableKey === listKey() ? k8s.table : null);
+  const usage = $derived(table ? k8s.usage : null);
 
   // Colunas: as principais (ou todas, em "mais colunas"); com todos os namespaces, um
   // "Namespace" logo depois da primeira.
-  type Col = { name: string; index: number | 'namespace' };
+  // Com metrics-server, CPU e memória antes da idade.
+  type Col = { name: string; index: number | 'namespace' | 'cpu' | 'memory' };
   const columns = $derived.by(() => {
     if (!table) return [] as Col[];
     const cols: Col[] = table.columns.flatMap((c, index) => (k8s.wide || c.priority === 0 ? [{ name: c.name, index }] : []));
     if (allNamespaces) cols.splice(1, 0, { name: 'Namespace', index: 'namespace' });
+    if (usage) {
+      const age = cols.findIndex((c) => c.name === 'Age');
+      cols.splice(age >= 0 ? age : cols.length, 0, { name: 'CPU', index: 'cpu' }, { name: 'Memória', index: 'memory' });
+    }
     return cols;
   });
 
   type Row = NonNullable<typeof table>['rows'][number];
+  const usageOf = (row: Row) => usage?.[row.namespace ? `${row.namespace}/${row.name}` : row.name];
   const cell = (row: Row, index: Col['index']) => {
+    if (index === 'cpu' || index === 'memory') {
+      const u = usageOf(row);
+      return !u ? '' : index === 'cpu' ? `${Math.round(u.cpu)}m` : formatBytes(u.memory);
+    }
     const v = index === 'namespace' ? row.namespace : row.cells[index];
     return v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
   };
@@ -70,7 +94,8 @@
       const col = columns[sort.column]?.index;
       if (col !== undefined) {
         const dir = sort.desc ? -1 : 1;
-        list.sort((a, b) => dir * compare(cell(a, col), cell(b, col)));
+        const metric = col === 'cpu' || col === 'memory' ? col : null;
+        list.sort((a, b) => dir * (metric ? (usageOf(a)?.[metric] ?? -1) - (usageOf(b)?.[metric] ?? -1) : compare(cell(a, col), cell(b, col))));
       }
     }
     return list;
@@ -134,6 +159,7 @@
   $effect(() => {
     void [k8s.context, k8s.namespace, k8s.kind];
     sort = null;
+    k8s.listError = '';
     void loadList();
     const timer = setInterval(() => !document.hidden && void loadList(), LIST_INTERVAL);
     return () => clearInterval(timer);
@@ -237,6 +263,33 @@
             </button>
           {/each}
         {/each}
+
+        {#if k8s.customs.length}
+          <div class="mt-2 mb-0.5 px-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Custom resources</div>
+          {#each customGroups as [group, list] (group)}
+            {@const open = openGroups[group] ?? list.some((c) => customKey(c) === k8s.kind)}
+            <button
+              class="flex w-full items-center gap-1 rounded-md px-1 py-1 text-left text-[13px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+              title={group}
+              onclick={() => (openGroups[group] = !open)}>
+              <ChevronRightIcon class={cn('size-3 shrink-0 transition-transform', open && 'rotate-90')} />
+              <span class="truncate">{group}</span>
+            </button>
+            {#if open}
+              {#each list as c (customKey(c))}
+                <button
+                  class={cn(
+                    'flex w-full items-center rounded-md py-1 pr-1.5 pl-5 text-left text-[13px] hover:bg-sidebar-accent',
+                    k8s.kind === customKey(c) && 'bg-sidebar-accent font-medium text-sidebar-primary',
+                  )}
+                  title={`${c.plural}.${c.group}/${c.version}`}
+                  onclick={() => selectKind(customKey(c))}>
+                  <span class="truncate">{c.kind}</span>
+                </button>
+              {/each}
+            {/if}
+          {/each}
+        {/if}
       </nav>
 
       {#if forwards.list.length}

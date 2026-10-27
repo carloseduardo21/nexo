@@ -200,6 +200,18 @@ export function installDevMock() {
         return kubeList(a?.kind, a?.namespace);
       case 'k8s_yaml':
         return kubeYaml;
+      case 'k8s_custom_resources':
+        return [
+          { group: 'cert-manager.io', version: 'v1', plural: 'certificates', kind: 'Certificate', namespaced: true },
+          { group: 'cert-manager.io', version: 'v1', plural: 'clusterissuers', kind: 'ClusterIssuer', namespaced: false },
+          { group: 'monitoring.coreos.com', version: 'v1', plural: 'servicemonitors', kind: 'ServiceMonitor', namespaced: true },
+        ];
+      case 'k8s_metrics':
+        return Object.fromEntries(
+          kubeTables[a?.nodes ? 'node' : 'pod'].rows.map((r, i) => [r.namespace ? `${r.namespace}/${r.name}` : r.name, { cpu: 12 + i * 37, memory: (48 + i * 90) * 1024 ** 2 }]),
+        );
+      case 'k8s_apply':
+        return a?.yaml;
       case 'k8s_containers':
         return { containers: [{ name: 'api', init: false }, { name: 'istio-proxy', init: false }], default: 'api' };
       case 'k8s_ports':

@@ -116,6 +116,12 @@ O mock fica fora do build de produção.
   estados com cor, filtro e ordenação. A lista visível atualiza a cada 5 s.
 - Clicar num item mostra o YAML (sem `managedFields`). Em Secrets os valores ficam escondidos
   até clicar em revelar.
+- **Editar o YAML** (lápis no painel; `Ctrl+S` salva): o objeto é substituído com o
+  `resourceVersion` que foi aberto, então se alguém mudou o objeto nesse meio-tempo o cluster
+  recusa e nada é sobrescrito. Nome e namespace não mudam; Secrets só com os valores revelados.
+- Com **metrics-server** no cluster, pods e nodes ganham as colunas de CPU e memória.
+- **Custom resources**: os CRDs do cluster aparecem na barra, agrupados por API group, com as
+  colunas definidas no CRD, YAML, edição e exclusão.
 - Menu de cada item (botão `…` ou clique direito): **logs** (acompanhando ao vivo, ou do container
   anterior depois de um restart) e **shell** de pods numa aba de terminal, **port-forward**,
   **escalar** e **reiniciar** workloads (como o `kubectl rollout restart`) e **excluir** (com

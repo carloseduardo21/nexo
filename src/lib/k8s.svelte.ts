@@ -1,14 +1,28 @@
 // Página Kubernetes: contexto, namespace e tipo escolhidos, a lista visível e o YAML aberto.
 import { toast } from 'svelte-sonner';
-import { backend, type KubeAction, type KubeContexts, type KubeForward, type KubeKind, type KubeTable, type KubeTermMode } from './backend';
+import {
+  backend,
+  type KubeAction,
+  type KubeContexts,
+  type KubeCustom,
+  type KubeForward,
+  type KubeKind,
+  type KubeResource,
+  type KubeTable,
+  type KubeTermMode,
+  type KubeUsage,
+} from './backend';
 import { newTab, openDialog } from './state.svelte';
 import { copyText, errorText } from './actions.svelte';
 import { settings } from './settings.svelte';
 
 export const LIST_INTERVAL = 5000;
 
+/** Tipo escolhido: um conhecido ou `crd:<plural>.<grupo>`. */
+export type KindKey = KubeKind | `crd:${string}`;
+
 export interface KindInfo {
-  kind: KubeKind;
+  kind: KindKey;
   label: string;
   namespaced: boolean;
 }
@@ -40,10 +54,27 @@ export const KIND_GROUPS: { label: string; kinds: KindInfo[] }[] = [
   { label: 'Cluster', kinds: [kind('node', 'Nodes', false), kind('namespace', 'Namespaces', false), kind('event', 'Eventos')] },
 ];
 
-export const kindInfo = (k: KubeKind) => KIND_GROUPS.flatMap((g) => g.kinds).find((i) => i.kind === k)!;
+const BUILTIN = KIND_GROUPS.flatMap((g) => g.kinds);
+
+export const customKey = (c: KubeCustom): KindKey => `crd:${c.plural}.${c.group}`;
+const customOf = (key: KindKey) => k8s.customs.find((c) => customKey(c) === key);
+
+export function kindInfo(key: KindKey): KindInfo {
+  const builtin = BUILTIN.find((i) => i.kind === key);
+  if (builtin) return builtin;
+  const custom = customOf(key);
+  return { kind: key, label: custom?.kind ?? key.slice(4), namespaced: custom?.namespaced ?? true };
+}
+
+/** O que vai para o backend; null = custom resource que este cluster não tem (ainda carregando). */
+function resourceOf(key: KindKey): KubeResource | null {
+  if (!key.startsWith('crd:')) return key as KubeKind;
+  const c = customOf(key);
+  return c ? { group: c.group, version: c.version, plural: c.plural, namespaced: c.namespaced } : null;
+}
 
 export interface Detail {
-  kind: KubeKind;
+  kind: KindKey;
   namespace: string;
   name: string;
   /** Pods: containers (para logs/shell de cada um). */
@@ -63,8 +94,13 @@ export const k8s = $state({
   namespaces: [] as string[],
   /** Sem permissão para listar namespaces: dá para digitar um. */
   namespacesError: '',
-  kind: 'pod' as KubeKind,
+  kind: 'pod' as KindKey,
+  /** Custom resources do contexto (null = carregando). */
+  customs: [] as KubeCustom[],
+  customsLoaded: false,
   table: null as KubeTable | null,
+  /** CPU/memória da lista (pods e nodes), se o cluster tem metrics-server. */
+  usage: null as Record<string, KubeUsage> | null,
   /** O que `table` mostra (contexto, namespace e tipo). */
   tableKey: '',
   listError: '',
@@ -76,7 +112,7 @@ export const k8s = $state({
 
 // Última escolha (por contexto, o namespace), só como conveniência desta máquina.
 const STORE = 'nexo.k8s';
-type Saved = { context?: string; kind?: KubeKind; namespaces?: Record<string, string> };
+type Saved = { context?: string; kind?: KindKey; namespaces?: Record<string, string> };
 
 function saved(): Saved {
   try {
@@ -98,7 +134,7 @@ function remember() {
   }
 }
 
-const listKey = () => `${k8s.context}\0${k8s.namespace}\0${k8s.kind}`;
+export const listKey = () => `${k8s.context}\0${k8s.namespace}\0${k8s.kind}`;
 
 /** Relê o kubeconfig e volta ao contexto anterior (ou ao atual do arquivo). */
 export async function loadContexts() {
@@ -112,7 +148,8 @@ export async function loadContexts() {
   }
   const names = k8s.config.contexts.map((c) => c.name);
   const last = saved();
-  if (last.kind && kindInfo(last.kind)) k8s.kind = last.kind;
+  if (last.kind) k8s.kind = last.kind;
+  noMetrics.clear();
   const pick = [k8s.context, last.context, k8s.config.current, names[0]].find((n) => n && names.includes(n));
   if (pick) selectContext(pick);
 }
@@ -127,9 +164,23 @@ export function selectContext(name: string) {
   }
   k8s.namespaces = [];
   k8s.namespacesError = '';
+  k8s.customs = [];
+  k8s.customsLoaded = false;
   k8s.detail = null;
   remember();
   void loadNamespaces();
+  void loadCustoms();
+}
+
+async function loadCustoms() {
+  const context = k8s.context;
+  const list = await backend.k8sCustomResources(settings.kubeconfig, context).catch(() => []);
+  if (k8s.context !== context) return;
+  k8s.customs = list;
+  k8s.customsLoaded = true;
+  // O custom resource escolhido não existe neste cluster.
+  if (k8s.kind.startsWith('crd:') && !customOf(k8s.kind)) selectKind('pod');
+  else void loadList();
 }
 
 async function loadNamespaces() {
@@ -147,37 +198,51 @@ export function selectNamespace(namespace: string) {
   remember();
 }
 
-export function selectKind(kind: KubeKind) {
+export function selectKind(kind: KindKey) {
   k8s.kind = kind;
   remember();
 }
 
 let inFlight = '';
+/** Contextos sem metrics-server (não pergunta de novo até recarregar o kubeconfig). */
+const noMetrics = new Set<string>();
 
 /** Atualiza a lista visível. Respostas que chegam depois de mudar a escolha são descartadas. */
 export async function loadList() {
-  if (!k8s.context) return;
+  const resource = resourceOf(k8s.kind);
+  if (!k8s.context || !resource) return;
   const key = listKey();
   if (inFlight === key) return;
   inFlight = key;
   if (k8s.tableKey !== key) k8s.loading = true;
   try {
-    const table = await backend.k8sList(settings.kubeconfig, k8s.context, k8s.kind, k8s.namespace);
+    const { context, kind, namespace } = k8s;
+    const metered = (kind === 'pod' || kind === 'node') && !noMetrics.has(context);
+    const [table, usage] = await Promise.all([
+      backend.k8sList(settings.kubeconfig, context, resource, namespace),
+      metered
+        ? backend.k8sMetrics(settings.kubeconfig, context, kind === 'node', namespace).catch(() => {
+            noMetrics.add(context);
+            return null;
+          })
+        : null,
+    ]);
     if (listKey() !== key) return;
     k8s.table = table;
+    k8s.usage = usage;
     k8s.tableKey = key;
     k8s.listError = '';
   } catch (err) {
     if (listKey() !== key) return;
     k8s.listError = errorText(err);
-    if (k8s.tableKey !== key) k8s.table = null;
+    if (k8s.tableKey !== key) [k8s.table, k8s.usage] = [null, null];
   } finally {
     if (inFlight === key) inFlight = '';
     if (listKey() === key) k8s.loading = false;
   }
 }
 
-export function openDetail(kind: KubeKind, namespace: string, name: string) {
+export function openDetail(kind: KindKey, namespace: string, name: string) {
   k8s.detail = { kind, namespace, name, containers: [], yaml: null, error: '', reveal: false };
   void loadYaml();
   if (kind === 'pod') {
@@ -193,13 +258,30 @@ export function openDetail(kind: KubeKind, namespace: string, name: string) {
 
 export async function loadYaml() {
   const d = k8s.detail;
-  if (!d) return;
+  const resource = d && resourceOf(d.kind);
+  if (!d || !resource) return;
   const { context } = k8s;
   try {
-    const yaml = await backend.k8sYaml(settings.kubeconfig, context, d.kind, d.namespace, d.name, d.reveal);
+    const yaml = await backend.k8sYaml(settings.kubeconfig, context, resource, d.namespace, d.name, d.reveal);
     if (k8s.detail === d) Object.assign(d, { yaml, error: '' });
   } catch (err) {
     if (k8s.detail === d) d.error = errorText(err);
+  }
+}
+
+/** Salva o YAML editado. Devolve se deu certo (o erro fica em `error`). */
+export async function saveYaml(text: string): Promise<string | null> {
+  const d = k8s.detail;
+  const resource = d && resourceOf(d.kind);
+  if (!d || !resource) return 'nada aberto';
+  try {
+    const yaml = await backend.k8sApply(settings.kubeconfig, k8s.context, resource, d.namespace, d.name, text);
+    if (k8s.detail === d) d.yaml = yaml;
+    toast.success(`${d.name} salvo`);
+    void loadList();
+    return null;
+  } catch (err) {
+    return errorText(err);
   }
 }
 
@@ -220,10 +302,10 @@ export function parseAge(text: string): number | null {
 
 // ---------- Ações ----------
 
-export const canScale = (k: KubeKind) => k === 'deployment' || k === 'statefulSet' || k === 'replicaSet';
-export const canRestart = (k: KubeKind) => k === 'deployment' || k === 'statefulSet' || k === 'daemonSet';
-export const canDelete = (k: KubeKind) => !['namespace', 'node', 'persistentVolume', 'storageClass'].includes(k);
-export const canForward = (k: KubeKind) => ['pod', 'service', 'deployment', 'statefulSet', 'daemonSet', 'replicaSet'].includes(k);
+export const canScale = (k: KindKey) => k === 'deployment' || k === 'statefulSet' || k === 'replicaSet';
+export const canRestart = (k: KindKey) => k === 'deployment' || k === 'statefulSet' || k === 'daemonSet';
+export const canDelete = (k: KindKey) => !['namespace', 'node', 'persistentVolume', 'storageClass'].includes(k);
+export const canForward = (k: KindKey): k is KubeKind => ['pod', 'service', 'deployment', 'statefulSet', 'daemonSet', 'replicaSet'].includes(k);
 
 /** Logs ou shell de um pod numa aba nova. */
 export function openPodTerminal(namespace: string, pod: string, mode: KubeTermMode, container = '') {
@@ -243,8 +325,10 @@ export function openPodTerminal(namespace: string, pod: string, mode: KubeTermMo
 }
 
 /** Escalar, reiniciar ou excluir, com confirmação. `replicas`: atual (sugestão no escalar). */
-export async function runAction(kind: KubeKind, namespace: string, name: string, type: KubeAction['type'], replicas?: number) {
+export async function runAction(kind: KindKey, namespace: string, name: string, type: KubeAction['type'], replicas?: number) {
   const label = kindInfo(kind).label;
+  const resource = resourceOf(kind);
+  if (!resource) return;
   let action: KubeAction;
   if (type === 'scale') {
     const value = await openDialog<string | null>({
@@ -274,7 +358,7 @@ export async function runAction(kind: KubeKind, namespace: string, name: string,
     action = { type };
   }
   try {
-    await backend.k8sAction(settings.kubeconfig, k8s.context, kind, namespace, name, action);
+    await backend.k8sAction(settings.kubeconfig, k8s.context, resource, namespace, name, action);
     toast.success(action.type === 'scale' ? `${name}: ${action.replicas} réplicas` : action.type === 'restart' ? `${name} reiniciando` : `${name} excluído`);
     if (action.type === 'delete' && k8s.detail?.name === name && k8s.detail.kind === kind) k8s.detail = null;
     void loadList();
@@ -311,7 +395,7 @@ export async function stopForward(id: number) {
 export type MenuItem = { label: string; run: () => void; destructive?: boolean } | null;
 
 /** Ações de um item (menu da linha e do painel de YAML). `desired`: réplicas atuais. */
-export function actionsFor(kind: KubeKind, namespace: string, name: string, opts: { desired?: number; containers?: string[] } = {}): MenuItem[] {
+export function actionsFor(kind: KindKey, namespace: string, name: string, opts: { desired?: number; containers?: string[] } = {}): MenuItem[] {
   const items: (MenuItem | false)[] = [];
   if (kind === 'pod') {
     const containers = opts.containers && opts.containers.length > 1 ? opts.containers : [''];

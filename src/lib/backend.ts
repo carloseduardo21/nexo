@@ -153,6 +153,24 @@ export type KubeKind =
   | 'namespace'
   | 'event';
 
+/** Um custom resource (de um CRD do cluster). */
+export interface KubeCustom {
+  group: string;
+  version: string;
+  plural: string;
+  kind: string;
+  namespaced: boolean;
+}
+
+/** O que o backend lista: um tipo conhecido ou um custom resource. */
+export type KubeResource = KubeKind | Omit<KubeCustom, 'kind'>;
+
+/** Uso atual pelo metrics-server: CPU em milicores, memória em bytes. */
+export interface KubeUsage {
+  cpu: number;
+  memory: number;
+}
+
 export interface KubeContext {
   name: string;
   cluster: string;
@@ -377,13 +395,20 @@ export const backend = {
   k8sContexts: (kubeconfig: string) => invoke<KubeContexts>('k8s_contexts', { kubeconfig }),
   k8sNamespaces: (kubeconfig: string, context: string) => invoke<string[]>('k8s_namespaces', { kubeconfig, context }),
   /** `namespace` '' = todos. */
-  k8sList: (kubeconfig: string, context: string, kind: KubeKind, namespace: string) =>
+  k8sList: (kubeconfig: string, context: string, kind: KubeResource, namespace: string) =>
     invoke<KubeTable>('k8s_list', { kubeconfig, context, kind, namespace: namespace || null }),
   /** Secrets vêm com os valores escondidos, a não ser que `reveal`. */
-  k8sYaml: (kubeconfig: string, context: string, kind: KubeKind, namespace: string, name: string, reveal: boolean) =>
+  k8sYaml: (kubeconfig: string, context: string, kind: KubeResource, namespace: string, name: string, reveal: boolean) =>
     invoke<string>('k8s_yaml', { kubeconfig, context, kind, namespace: namespace || null, name, reveal }),
+  /** Salva o YAML editado; devolve como ficou no cluster. */
+  k8sApply: (kubeconfig: string, context: string, kind: KubeResource, namespace: string, name: string, yaml: string) =>
+    invoke<string>('k8s_apply', { kubeconfig, context, kind, namespace: namespace || null, name, yaml }),
+  /** Por `namespace/nome` (pods) ou `nome` (nodes). Falha sem metrics-server. */
+  k8sMetrics: (kubeconfig: string, context: string, nodes: boolean, namespace: string) =>
+    invoke<Record<string, KubeUsage>>('k8s_metrics', { kubeconfig, context, nodes, namespace: namespace || null }),
+  k8sCustomResources: (kubeconfig: string, context: string) => invoke<KubeCustom[]>('k8s_custom_resources', { kubeconfig, context }),
 
-  k8sAction: (kubeconfig: string, context: string, kind: KubeKind, namespace: string, name: string, action: KubeAction) =>
+  k8sAction: (kubeconfig: string, context: string, kind: KubeResource, namespace: string, name: string, action: KubeAction) =>
     invoke<void>('k8s_action', { kubeconfig, context, kind, namespace: namespace || null, name, action }),
   k8sContainers: (kubeconfig: string, context: string, namespace: string, pod: string) =>
     invoke<{ containers: { name: string; init: boolean }[]; default: string }>('k8s_containers', { kubeconfig, context, namespace, pod }),

@@ -9,11 +9,56 @@
   import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
   import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
-  import { actionsFor, k8s, kindInfo, loadYaml, openPodTerminal, toggleReveal } from '../lib/k8s.svelte';
+  import PencilIcon from '@lucide/svelte/icons/pencil';
+  import { actionsFor, k8s, kindInfo, loadYaml, openPodTerminal, saveYaml, toggleReveal } from '../lib/k8s.svelte';
   import { copyText } from '../lib/actions.svelte';
 
   const detail = $derived(k8s.detail!);
   const secret = $derived(detail.kind === 'secret');
+  /** Editando: o texto (null = só leitura). */
+  let draft = $state<string | null>(null);
+  let saveError = $state('');
+  let saving = $state(false);
+  const hidden = $derived(secret && !detail.reveal);
+
+  // Outro item aberto: sai da edição.
+  $effect(() => {
+    void [detail.kind, detail.namespace, detail.name];
+    draft = null;
+    saveError = '';
+  });
+
+  function startEdit() {
+    if (detail.yaml === null || hidden) return;
+    draft = detail.yaml;
+    saveError = '';
+  }
+
+  async function save() {
+    if (draft === null || saving) return;
+    saving = true;
+    const error = await saveYaml(draft);
+    saving = false;
+    if (error) saveError = error;
+    else draft = null;
+  }
+
+  function editorKey(e: KeyboardEvent) {
+    const area = e.currentTarget as HTMLTextAreaElement;
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
+      e.preventDefault();
+      void save();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      draft = null;
+    } else if (e.key === 'Tab' && !e.shiftKey) {
+      // YAML usa espaços: Tab indenta em vez de sair do campo.
+      e.preventDefault();
+      area.setRangeText('  ', area.selectionStart, area.selectionEnd, 'end');
+      draft = area.value;
+    }
+  }
+
   const items = $derived(actionsFor(detail.kind, detail.namespace, detail.name, { containers: detail.containers }));
 
   /** Realce simples por linha: chave, `- ` de lista e valores (número, booleano, nulo). */
@@ -44,7 +89,7 @@
   const lines = $derived((detail.yaml ?? '').replace(/\n$/, '').split('\n'));
 
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && !e.defaultPrevented && !document.querySelector('[role=dialog],[role=menu]')) k8s.detail = null;
+    if (e.key === 'Escape' && draft === null && !e.defaultPrevented && !document.querySelector('[role=dialog],[role=menu]')) k8s.detail = null;
   }
 </script>
 
@@ -69,6 +114,14 @@
         {#if detail.reveal}<EyeOffIcon />{:else}<EyeIcon />{/if}
       </Button>
     {/if}
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      title={hidden ? 'Revele os valores para editar' : 'Editar YAML'}
+      disabled={detail.yaml === null || hidden || draft !== null}
+      onclick={startEdit}>
+      <PencilIcon />
+    </Button>
     <Button variant="ghost" size="icon-sm" title="Copiar YAML" disabled={!detail.yaml} onclick={() => detail.yaml && copyText(detail.yaml)}><CopyIcon /></Button>
     <Button variant="ghost" size="icon-sm" title="Recarregar" onclick={() => void loadYaml()}><RefreshIcon /></Button>
     <DropdownMenu.Root>
@@ -90,7 +143,25 @@
     <Button variant="ghost" size="icon-sm" title="Fechar (Esc)" onclick={() => (k8s.detail = null)}><XIcon /></Button>
   </header>
 
-  {#if detail.error}
+  {#if draft !== null}
+    <div class="flex min-h-0 flex-1 flex-col">
+      {#if saveError}
+        <p class="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">{saveError}</p>
+      {/if}
+      <!-- svelte-ignore a11y_autofocus -->
+      <textarea
+        class="min-h-0 flex-1 resize-none bg-background p-4 font-mono text-xs leading-relaxed outline-none"
+        spellcheck="false"
+        autofocus
+        bind:value={draft}
+        onkeydown={editorKey}></textarea>
+      <div class="flex items-center gap-2 border-t px-4 py-2">
+        <span class="flex-1 text-[11px] text-muted-foreground">Ctrl+S salva · Esc cancela</span>
+        <Button variant="outline" size="sm" onclick={() => (draft = null)}>Cancelar</Button>
+        <Button size="sm" disabled={saving} onclick={save}>{saving ? 'Salvando…' : 'Salvar'}</Button>
+      </div>
+    </div>
+  {:else if detail.error}
     <p class="p-4 text-sm text-destructive">{detail.error}</p>
   {:else if detail.yaml === null}
     <p class="p-4 text-sm text-muted-foreground">Carregando…</p>
