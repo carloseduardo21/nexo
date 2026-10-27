@@ -1,0 +1,54 @@
+# Mantém o cache do Rust do build de release na main. O GitHub isola o cache por ref, então o de
+# uma tag não serve para a próxima; já o da main (branch padrão) é lido por todas as tags. Assim a
+# release só compila o próprio Nexo, e não as ~900 dependências.
+name: Cache
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - src-tauri/Cargo.lock
+      - src-tauri/Cargo.toml
+      - .github/workflows/cache.yml
+  # O GitHub apaga caches sem uso há 7 dias.
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            key: release-windows
+          - os: ubuntu-22.04
+            key: release-linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependências do sistema (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev patchelf rpm
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: ${{ matrix.key }}
+
+      - run: npm ci
+
+      # Os mesmos flags da release (perfil release, sem instaladores).
+      - run: npx tauri build --no-bundle

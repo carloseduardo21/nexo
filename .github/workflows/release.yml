@@ -6,6 +6,9 @@
 # segredo SIGNPATH_API_TOKEN existem no repositório. Sem elas, os instaladores saem sem assinatura.
 # O executável é assinado antes de entrar nos instaladores, e os instaladores depois; cada pedido
 # espera a aprovação manual no SignPath. Configurações dos artefatos em .signpath/.
+#
+# Tempo: o cache do Rust de uma tag não serve para a próxima (o GitHub isola o cache por ref), então
+# o cache.yml compila na main e os jobs daqui só leem o cache dela (`shared-key` igual).
 name: Release
 
 on:
@@ -37,9 +40,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
+          notes="Instaladores para Windows (.msi / -setup.exe) e Linux (.deb / .rpm / .AppImage).
+
+          Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/) — see the [code signing policy](https://github.com/${{ github.repository }}#política-de-assinatura-de-código-code-signing-policy)."
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --target "$GITHUB_SHA" \
-            --title "Nexo $TAG" \
-            --notes "Instaladores para Windows (.msi / -setup.exe) e Linux (.deb / .rpm / .AppImage)."
+            --title "Nexo $TAG" --notes "$notes"
 
   linux:
     needs: release
@@ -63,6 +68,8 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: release-linux
+          save-if: false
 
       - run: npm ci
 
@@ -93,6 +100,8 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: release-windows
+          save-if: false
 
       - run: npm ci
 
