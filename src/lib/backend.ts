@@ -256,7 +256,8 @@ export type Exec = { kind: 'dockerLogs' | 'dockerShell'; container: string; sudo
 
 /** `docker` via sudo: sem `password`, o backend usa a senha salva do host (ou da credencial). */
 export interface Sudo {
-  hostId: string;
+  /** Host salvo (a senha dele serve para o sudo); ausente em terminais locais. */
+  hostId?: string;
   password?: string;
   /** Salvar a senha digitada no cofre, se o sudo aceitar. */
   remember?: boolean;
@@ -328,8 +329,9 @@ function progressChannel(onProgress: (p: TransferProgress) => void) {
 export const backend = {
   listShells: () => invoke<ShellProfile[]>('list_shells'),
 
-  spawnPty: (profileId: string, cols: number, rows: number, onData: DataHandler, onExit: ExitHandler) =>
-    invoke<number>('pty_spawn', { profileId, cols, rows, ...channels(onData, onExit) }),
+  /** `exec`: roda só esse comando (logs/shell de um container) em vez do shell. */
+  spawnPty: (profileId: string, cols: number, rows: number, onData: DataHandler, onExit: ExitHandler, exec?: Exec) =>
+    invoke<number>('pty_spawn', { profileId, cols, rows, exec, ...channels(onData, onExit) }),
 
   connectSsh: (
     hostId: string,

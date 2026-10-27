@@ -16,7 +16,7 @@ import {
 import { DEFAULT_FONT, onAppearanceChange, settings, theme } from './settings.svelte';
 
 /** O que um painel mostra: terminal (local ou SSH) ou área de trabalho RDP (`rdp.ts`). */
-export type TermSpec = { kind: 'local'; profile: ShellProfile } | { kind: 'ssh'; host: HostView; exec?: ExecSpec } | { kind: 'kube'; kube: KubeTermSpec };
+export type TermSpec = { kind: 'local'; profile: ShellProfile; exec?: ExecSpec } | { kind: 'ssh'; host: HostView; exec?: ExecSpec } | { kind: 'kube'; kube: KubeTermSpec };
 
 /** Logs ou shell de um pod do Kubernetes (pela API do cluster, sem SSH). */
 export interface KubeTermSpec {
@@ -30,11 +30,11 @@ export interface KubeTermSpec {
   title: string;
 }
 
-/** Terminal que roda um comando (logs/shell de um container) na conexão de outro painel. */
+/** Terminal que roda um comando (logs/shell de um container): no SSH, na conexão de outro painel. */
 export interface ExecSpec {
   exec: Exec;
   title: string;
-  /** Sessão de onde veio: a conexão dela é reaproveitada enquanto existir. */
+  /** SSH: sessão de onde veio (a conexão dela é reaproveitada enquanto existir). */
   parentSession: number | null;
 }
 export type PaneSpec = TermSpec | { kind: 'rdp'; host: HostView };
@@ -199,7 +199,7 @@ export class TermPane {
     if (this.spec.kind === 'ssh') return this.connectSsh(this.spec.host, this.spec.exec);
     if (this.spec.kind === 'kube') return this.connectKube(this.spec.kube);
     try {
-      this.sessionId = await backend.spawnPty(this.spec.profile.id, this.term.cols, this.term.rows, this.onData, this.onExit);
+      this.sessionId = await backend.spawnPty(this.spec.profile.id, this.term.cols, this.term.rows, this.onData, this.onExit, this.spec.exec?.exec);
       this.cb.onSession(this.sessionId);
     } catch (err) {
       this.term.write(`\x1b[31mFalha ao iniciar ${this.spec.profile.name}: ${err}\x1b[0m\r\n`);

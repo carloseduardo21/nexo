@@ -15,6 +15,8 @@ export interface Settings {
   hostsSidebar: boolean;
   /** Kubeconfig da página Kubernetes; '' = o padrão (KUBECONFIG ou ~/.kube/config). */
   kubeconfig: string;
+  /** Terminais locais (ids de perfil) em que o painel usa `sudo docker`. */
+  dockerSudoLocal: string[];
 }
 
 export const DEFAULT_FONT = '"Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, "DejaVu Sans Mono", monospace';
@@ -28,6 +30,7 @@ const defaults: Settings = {
   startWithTerminal: false,
   hostsSidebar: true,
   kubeconfig: '',
+  dockerSudoLocal: [],
 };
 
 export const settings = $state<Settings>({ ...defaults });

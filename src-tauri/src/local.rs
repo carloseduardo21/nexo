@@ -188,6 +188,49 @@ pub fn spawn(
 mod tests {
     use super::*;
 
+    /// No PTY (logs/shell de container), o comando também chega inteiro ao `sh`.
+    #[test]
+    #[ignore]
+    fn live_pty_command() {
+        let profile = crate::shells::profiles().iter().find(|p| p.kind == "wsl" || p.kind == "unix").expect("sem WSL").clone();
+        let (program, args) = sh_command(&profile, "a='x y'; command -v sh >/dev/null && echo \"ok:[$a]\" || echo falhou").unwrap();
+        let pair = native_pty_system().openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }).unwrap();
+        let mut cmd = CommandBuilder::new(program);
+        cmd.args(args);
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        // A leitura do ConPTY não termina sozinha: lê numa thread e espera com prazo.
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = reader.read(&mut buf) {
+                if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+        // O ConPTY pergunta a posição do cursor antes de começar (o xterm.js responde no app).
+        let mut writer = pair.master.take_writer().unwrap();
+        let mut out = String::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !out.contains("ok:[x y]") {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            match rx.recv_timeout(left) {
+                Ok(data) => {
+                    let text = String::from_utf8_lossy(&data);
+                    if text.contains("\x1b[6n") {
+                        writer.write_all(b"\x1b[1;1R").unwrap();
+                    }
+                    out.push_str(&text);
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = child.kill();
+        assert!(out.contains("ok:[x y]"), "{out:?}");
+    }
+
     /// O script chega inteiro (aspas, `$`, quebras de linha) e o código de saída volta.
     #[tokio::test]
     #[ignore]
@@ -200,5 +243,11 @@ mod tests {
         let metrics = run(&profile, crate::hostinfo::METRICS_SCRIPT, None).await.unwrap();
         assert_eq!(metrics.status, Some(0), "{}", metrics.stderr());
         crate::hostinfo::parse(&metrics.stdout()).unwrap();
+        // Docker na distro (se tiver): a lista vem como no SSH.
+        let docker = run(&profile, crate::docker::LIST_SCRIPT, None).await.unwrap();
+        match docker.status {
+            Some(0) => println!("{} containers", crate::docker::parse_list(&docker.stdout()).len()),
+            other => println!("docker: {other:?} {}", docker.stderr()),
+        }
     }
 }

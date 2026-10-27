@@ -1,6 +1,26 @@
 import { toast } from 'svelte-sonner';
-import { backend, type Container, type ContainerAction, type DockerError, type HostMetrics, type HostView, type Sudo } from './backend';
-import { app, newTab, openDialog, refreshCredentials, refreshHosts, saveHost } from './state.svelte';
+import { backend, type Container, type ContainerAction, type DockerError, type Exec, type HostMetrics, type HostView, type Sudo } from './backend';
+import { activeTab, app, newTab, openDialog, refreshCredentials, refreshHosts, saveHost, type PaneKind } from './state.svelte';
+import { leaves } from './layout';
+import { settings, updateSettings } from './settings.svelte';
+
+/** Terminais em que o painel funciona: SSH, e os locais Linux e WSL (PowerShell e cmd não). */
+const SUPPORTED: PaneKind[] = ['ssh', 'unix', 'wsl'];
+export const hostPanelSupports = (kind: PaneKind | undefined) => !!kind && SUPPORTED.includes(kind);
+
+/** Painel que o painel do host mostra: o focado, ou o primeiro compatível da aba. */
+export function hostTarget(): string | undefined {
+  const tab = activeTab();
+  if (!tab) return undefined;
+  if (hostPanelSupports(app.meta[tab.focused]?.kind)) return tab.focused;
+  return leaves(tab.root).find((id) => hostPanelSupports(app.meta[id]?.kind));
+}
+
+/** Nome do lugar onde o painel roda: o host SSH ou o terminal local. */
+export function paneLabel(paneId: string): string {
+  const spec = app.meta[paneId]?.spec;
+  return spec?.kind === 'ssh' ? spec.host.label : spec?.kind === 'local' ? spec.profile.name : 'Host';
+}
 
 /** Amostras guardadas para os gráficos (2 s cada: 2 minutos). */
 const HISTORY = 60;
@@ -116,9 +136,15 @@ export function paneHost(paneId: string): HostView | undefined {
   return spec?.kind === 'ssh' ? (app.hosts.find((h) => h.id === spec.host.id) ?? spec.host) : undefined;
 }
 
+/** O painel usa `sudo docker`? (no host salvo, ou nas configurações para terminais locais). */
+export function dockerSudoOn(paneId: string): boolean {
+  const spec = app.meta[paneId]?.spec;
+  if (spec?.kind === 'local') return settings.dockerSudoLocal.includes(spec.profile.id);
+  return !!paneHost(paneId)?.dockerSudo;
+}
+
 function sudoFor(paneId: string, state: Containers, extra?: Partial<Sudo>): Sudo | undefined {
-  const host = paneHost(paneId);
-  return host?.dockerSudo ? { hostId: host.id, password: state.sudoPassword, ...extra } : undefined;
+  return dockerSudoOn(paneId) ? { hostId: paneHost(paneId)?.id, password: state.sudoPassword, ...extra } : undefined;
 }
 
 const isDockerError = (err: unknown): err is DockerError => typeof err === 'object' && err !== null && 'kind' in err;
@@ -142,18 +168,19 @@ async function withDocker<T>(paneId: string, state: Containers, call: (sudo?: Su
     } catch (err) {
       if (hostinfo.containers[paneId] !== state) return undefined;
       if (isDockerError(err) && err.kind === 'needSudoPassword' && sudo) {
-        const host = paneHost(paneId)!;
+        const host = paneHost(paneId);
         state.paused = true;
         const answer = await openDialog<{ value: string; remember: boolean } | null>({
           type: 'secret',
           host,
           field: 'password',
           title: 'Senha do sudo',
-          description: `Para rodar o Docker como root em ${host.username}@${host.hostname}.`,
+          description: `Para rodar o Docker como root em ${host ? `${host.username}@${host.hostname}` : paneLabel(paneId)}.`,
           confirm: 'Continuar',
           error: err.wrong ? 'Senha incorreta.' : undefined,
-          // Já há senha salva (a do login): a do sudo é outra e fica só em memória.
-          noRemember: host.hasPassword,
+          // Já há senha salva (a do login): a do sudo é outra e fica só em memória. Terminal
+          // local não tem onde salvar.
+          noRemember: !host || host.hasPassword,
         });
         if (!answer) {
           state.error = 'O Docker precisa da senha do sudo.';
@@ -185,8 +212,24 @@ export async function loadContainers(paneId: string, manual = false) {
   }
 }
 
-/** Liga (com confirmação) ou desliga o `sudo docker` no host do painel. */
+/** Liga (com confirmação) ou desliga o `sudo docker` no host do painel (ou no terminal local). */
 export async function setDockerSudo(paneId: string, on: boolean) {
+  const spec = app.meta[paneId]?.spec;
+  if (spec?.kind === 'local') {
+    const id = spec.profile.id;
+    if (on) {
+      const ok = await openDialog<boolean>({
+        type: 'confirm',
+        title: 'Usar sudo para o Docker?',
+        message: `O painel vai rodar "sudo docker" em ${spec.profile.name} — os comandos rodam como root. O Nexo pede a senha do sudo quando precisar (ela fica só na memória).`,
+        confirm: 'Usar sudo',
+      });
+      if (!ok) return;
+    }
+    const others = settings.dockerSudoLocal.filter((p) => p !== id);
+    updateSettings({ dockerSudoLocal: on ? [...others, id] : others });
+    return resetContainers(paneId);
+  }
   const host = paneHost(paneId);
   if (!host) return;
   if (on) {
@@ -202,6 +245,10 @@ export async function setDockerSudo(paneId: string, on: boolean) {
   }
   const { hasPassword: _p, hasPassphrase: _pp, ...plain } = $state.snapshot(host);
   await saveHost({ ...plain, dockerSudo: on });
+  await resetContainers(paneId);
+}
+
+async function resetContainers(paneId: string) {
   const state = containersOf(paneId);
   if (state) Object.assign(state, { list: null, error: '', offerSudo: false, sudoPassword: undefined, paused: false });
   await loadContainers(paneId, true);
@@ -244,18 +291,13 @@ export async function containerAction(paneId: string, c: Container, action: Cont
   await loadContainers(paneId, true);
 }
 
-/** Logs (acompanhando) ou shell do container numa aba nova, na conexão do painel. */
+/** Logs (acompanhando) ou shell do container numa aba nova: na conexão SSH do painel ou no terminal local. */
 export function openContainerTerminal(paneId: string, c: Container, kind: 'logs' | 'shell') {
   const meta = app.meta[paneId];
-  if (meta?.spec.kind !== 'ssh') return;
-  newTab({
-    kind: 'ssh',
-    host: meta.spec.host,
-    exec: {
-      // Com sudo, o prompt de senha aparece no terminal (com a sugestão da senha salva).
-      exec: { kind: kind === 'logs' ? 'dockerLogs' : 'dockerShell', container: c.id, sudo: !!paneHost(paneId)?.dockerSudo },
-      title: `${kind === 'logs' ? 'logs' : 'shell'}: ${c.name}`,
-      parentSession: meta.sessionId,
-    },
-  });
+  if (!meta || meta.spec.kind === 'rdp' || meta.spec.kind === 'kube') return;
+  // Com sudo, o prompt de senha aparece no terminal (no SSH, com a sugestão da senha salva).
+  const exec: Exec = { kind: kind === 'logs' ? 'dockerLogs' : 'dockerShell', container: c.id, sudo: dockerSudoOn(paneId) };
+  const title = `${kind === 'logs' ? 'logs' : 'shell'}: ${c.name}`;
+  if (meta.spec.kind === 'local') newTab({ kind: 'local', profile: meta.spec.profile, exec: { exec, title, parentSession: null } });
+  else newTab({ kind: 'ssh', host: meta.spec.host, exec: { exec, title, parentSession: meta.sessionId } });
 }

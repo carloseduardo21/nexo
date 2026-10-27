@@ -132,7 +132,7 @@
     <Dialog.Content class="sm:max-w-sm">
       <Dialog.Header>
         <Dialog.Title>{d.title ?? (d.field === 'password' ? 'Senha' : 'Passphrase da chave')}</Dialog.Title>
-        <Dialog.Description>{d.description ?? (d.field === 'password' ? `${d.host.username}@${d.host.hostname}` : d.keyPath)}</Dialog.Description>
+        <Dialog.Description>{d.description ?? (d.field === 'password' ? `${d.host?.username}@${d.host?.hostname}` : d.keyPath)}</Dialog.Description>
       </Dialog.Header>
       <form
         id="secret-form"
@@ -148,7 +148,7 @@
           <label class="flex items-center gap-2 text-sm">
             <Checkbox checked={remember} onCheckedChange={(v) => (remember = v === true)} />
             <LockIcon class="size-3.5 text-muted-foreground" />
-            Salvar no cofre{d.host.credentialId ? ' (na credencial)' : ''}
+            Salvar no cofre{d.host?.credentialId ? ' (na credencial)' : ''}
           </label>
         {/if}
       </form>

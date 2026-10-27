@@ -22,7 +22,7 @@
     hostinfo,
     loadContainers,
     openContainerTerminal,
-    paneHost,
+    dockerSudoOn,
     setDockerSudo,
   } from '../lib/hostinfo.svelte';
   import { copyText } from '../lib/actions.svelte';
@@ -47,7 +47,7 @@
     return [...map];
   });
   const running = $derived((list ?? []).filter((c) => c.state === 'running').length);
-  const sudo = $derived(!!paneHost(paneId)?.dockerSudo);
+  const sudo = $derived(dockerSudoOn(paneId));
 
   $effect(() => {
     const pane = paneId;

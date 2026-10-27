@@ -94,6 +94,9 @@ O mock fica fora do build de produção.
   (taxa de download/upload) e uso de cada disco. Atualiza a cada 2 segundos enquanto está aberto.
 - Usa um canal extra na conexão do terminal e só lê `/proc` e `df`: nada é instalado no servidor.
   Funciona em servidores Linux (inclusive Alpine/BusyBox).
+- Também em **terminais locais Linux e WSL**: o painel mostra a própria máquina (ou a distro WSL,
+  via `wsl.exe -d <distro>`) e o Docker dela. PowerShell e cmd ficam de fora. O "usar sudo" de um
+  terminal local fica nas configurações do Nexo e a senha é pedida quando preciso (só em memória).
 - Aba **Containers**: os containers Docker do servidor, agrupados por projeto do Compose, com
   status, CPU e memória (a cada 5 s). Iniciar, parar, reiniciar, pausar, remover (só parados).
   **Logs** (acompanhando ao vivo) e **shell** no container abrem numa aba nova, na mesma conexão

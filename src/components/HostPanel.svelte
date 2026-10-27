@@ -8,10 +8,9 @@
   import ContainerList from './ContainerList.svelte';
   import { app } from '../lib/state.svelte';
   import { side } from '../lib/side.svelte';
-  import { sftpTarget } from '../lib/sftp.svelte';
-  import { forgetPane, hostinfo } from '../lib/hostinfo.svelte';
+  import { forgetPane, hostinfo, hostTarget, paneLabel } from '../lib/hostinfo.svelte';
 
-  const target = $derived(sftpTarget());
+  const target = $derived(hostTarget());
   const meta = $derived(target ? app.meta[target] : undefined);
   const sessionId = $derived(meta?.sessionId ?? null);
 
@@ -24,14 +23,14 @@
 <aside class="flex w-[340px] shrink-0 flex-col border-l bg-sidebar">
   <header class="flex h-9 shrink-0 items-center gap-2 border-b pr-1.5 pl-3 text-muted-foreground">
     <ActivityIcon class="size-3.5" />
-    <span class="min-w-0 flex-1 truncate text-sm">{meta?.spec.kind === 'ssh' ? meta.spec.host.label : 'Host'}</span>
+    <span class="min-w-0 flex-1 truncate text-sm">{target ? paneLabel(target) : 'Host'}</span>
     <Button variant="ghost" size="icon-sm" title="Fechar (Ctrl+Shift+M)" onclick={() => (side.panel = null)}><XIcon /></Button>
   </header>
 
   {#if !target}
     <div class="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
       <ServerIcon class="size-6" />
-      <p>Abra uma sessão SSH para ver as métricas e os containers do servidor.</p>
+      <p>Abra uma sessão SSH ou um terminal Linux/WSL para ver as métricas e os containers.</p>
     </div>
   {:else if sessionId == null}
     <p class="p-6 text-center text-sm text-muted-foreground">{meta?.exited ? 'Sessão encerrada.' : 'Aguardando a conexão…'}</p>
