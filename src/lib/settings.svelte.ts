@@ -17,6 +17,8 @@ export interface Settings {
   kubeconfig: string;
   /** Terminais locais (ids de perfil) em que o painel usa `sudo docker`. */
   dockerSudoLocal: string[];
+  /** Procurar versões novas ao iniciar e a cada 6 h. */
+  checkUpdates: boolean;
 }
 
 export const DEFAULT_FONT = '"Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, "DejaVu Sans Mono", monospace';
@@ -31,6 +33,7 @@ const defaults: Settings = {
   hostsSidebar: true,
   kubeconfig: '',
   dockerSudoLocal: [],
+  checkUpdates: true,
 };
 
 export const settings = $state<Settings>({ ...defaults });

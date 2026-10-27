@@ -16,9 +16,10 @@
   import { app, handleShortcut, init } from './lib/state.svelte';
   import { settings } from './lib/settings.svelte';
   import { side } from './lib/side.svelte';
+  import { scheduleUpdateChecks } from './lib/updater.svelte';
 
   onMount(() => {
-    void init();
+    void init().then(scheduleUpdateChecks);
     window.addEventListener('keydown', handleShortcut, true);
     return () => window.removeEventListener('keydown', handleShortcut, true);
   });

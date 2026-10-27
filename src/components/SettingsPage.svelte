@@ -9,6 +9,7 @@
   import DownloadIcon from '@lucide/svelte/icons/download';
   import UploadIcon from '@lucide/svelte/icons/upload';
   import FileInputIcon from '@lucide/svelte/icons/file-input';
+  import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
   import * as Card from '$lib/components/ui/card/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
@@ -18,6 +19,7 @@
   import { openDialog, refreshCredentials, refreshHosts, refreshTunnels } from '../lib/state.svelte';
   import { DEFAULT_FONT, settings, updateSettings, type Accent, type ThemeMode } from '../lib/settings.svelte';
   import { errorText } from '../lib/actions.svelte';
+  import { checkForUpdates, scheduleUpdateChecks, updater } from '../lib/updater.svelte';
   import { cn } from '$lib/utils.js';
 
   const themes: { value: ThemeMode; label: string; icon: typeof MoonIcon }[] = [
@@ -62,6 +64,19 @@
 
 {#snippet sshImport()}<Button variant="outline" onclick={() => void openDialog({ type: 'sshImport' })}><FileInputIcon /> Importar</Button>{/snippet}
 {#snippet importJson()}<Button variant="outline" onclick={importVault}><DownloadIcon /> Importar</Button>{/snippet}
+{#snippet autoUpdate()}
+  <Switch
+    checked={settings.checkUpdates}
+    onCheckedChange={(v) => {
+      updateSettings({ checkUpdates: v });
+      scheduleUpdateChecks();
+    }} />
+{/snippet}
+{#snippet checkNow()}
+  <Button variant="outline" disabled={updater.checking || updater.busy} onclick={() => void checkForUpdates(true)}>
+    <RefreshIcon class={cn(updater.checking && 'animate-spin')} /> Verificar agora
+  </Button>
+{/snippet}
 {#snippet exportJson()}<Button variant="outline" onclick={exportVault}><UploadIcon /> Exportar</Button>{/snippet}
 
 {#snippet row(label: string, hint: string, control: import('svelte').Snippet)}
@@ -165,6 +180,17 @@
 
     <Card.Root>
       <Card.Header>
+        <Card.Title>Atualizações</Card.Title>
+        <Card.Description>Versões novas vêm das releases do GitHub, assinadas; o Nexo avisa e só instala quando você pede.</Card.Description>
+      </Card.Header>
+      <Card.Content class="divide-y">
+        {@render row('Procurar automaticamente', 'Ao abrir o Nexo e a cada 6 horas.', autoUpdate)}
+        {@render row(`Nexo ${version}`, 'A versão instalada.', checkNow)}
+      </Card.Content>
+    </Card.Root>
+
+    <Card.Root>
+      <Card.Header>
         <Card.Title>Atalhos</Card.Title>
       </Card.Header>
       <Card.Content>
@@ -176,7 +202,5 @@
         </dl>
       </Card.Content>
     </Card.Root>
-
-    <p class="pb-4 text-center text-xs text-muted-foreground">Nexo {version}</p>
   </div>
 </div>

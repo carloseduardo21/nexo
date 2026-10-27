@@ -99,6 +99,8 @@ let seq = 0;
 const uid = (prefix: string) => `${prefix}${++seq}`;
 
 export const getPane = (id: string) => panes.get(id);
+/** Painéis abertos (terminais e áreas remotas), em todas as abas. */
+export const paneCount = () => panes.size;
 export const activeTab = () => app.tabs.find((t) => t.id === app.activeTab);
 const tabById = (id: string | undefined) => app.tabs.find((t) => t.id === id);
 

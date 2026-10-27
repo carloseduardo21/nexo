@@ -31,10 +31,19 @@ está configurado lá (variáveis `SIGNPATH_*` do repositório; ver o comentári
 configurações em `.signpath/`). Builds locais não são assinados: o Windows SmartScreen avisa na
 primeira execução ("Mais informações" → "Executar assim mesmo").
 
+**Atualização automática:** o app procura versões novas (ao abrir e a cada 6 h, ou em
+Configurações → Atualizações) no `latest.json` da última release publicada, avisa com um toast e,
+com o ok do usuário, baixa, instala e reinicia. Cada tipo de instalação se atualiza pelo próprio
+formato (NSIS, MSI, `.deb` e `.rpm` pedindo a senha de administrador, AppImage). Os arquivos são
+conferidos com a chave pública em `tauri.conf.json` (`plugins.updater.pubkey`); o workflow assina
+com a privada, no segredo `TAURI_SIGNING_PRIVATE_KEY` do repositório, e só gera o `latest.json`
+quando ele existe. Como o app olha a última release *publicada*, a atualização chega a todos
+quando o rascunho é publicado.
+
 Só a interface, no navegador (`npm run dev` e abrir http://localhost:1420): fora do Tauri, o
 `src/dev-mock.ts` simula o backend com dados de exemplo. `?view=credentials|tunnels|settings|session`,
 `?dialog=host|newhost|credential|tunnel|palette|generate`, `?panel=host|sftp` (com `view=session`) e
-`?theme=light` abrem direto uma tela.
+`?theme=light` abrem direto uma tela; `?update=1` simula uma versão nova.
 O mock fica fora do build de produção.
 
 ## Interface
@@ -198,8 +207,8 @@ O mock fica fora do build de produção.
 
 ## Política de assinatura de código (Code signing policy)
 
-Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by
-[SignPath Foundation](https://signpath.org/).
+Ainda não ativa: até o projeto entrar no programa da [SignPath Foundation](https://signpath.org/),
+os binários do Windows saem sem assinatura Authenticode. Quando entrar, vale o seguinte.
 
 Os binários do Windows publicados nas releases são compilados pelo GitHub Actions a partir deste
 repositório (`.github/workflows/release.yml`) e assinados pela SignPath. Nenhum binário compilado
@@ -213,9 +222,10 @@ Contribuições de fora do time entram por pull request, revisadas antes do merg
 
 ## Privacidade
 
-O Nexo não coleta nem envia dados a ninguém: não tem telemetria, analytics nem verificação de
-atualização. Ele só se conecta aos servidores que você configura (SSH, RDP, clusters do
-kubeconfig). Hosts, credenciais e configurações ficam nesta máquina; senhas e chaves, no cofre
+O Nexo não coleta nem envia dados a ninguém: não tem telemetria nem analytics. Ele só se conecta
+aos servidores que você configura (SSH, RDP, clusters do kubeconfig) e, para procurar
+atualizações, ao GitHub (o `latest.json` das releases deste repositório; dá para desligar em
+Configurações → Atualizações). Hosts, credenciais e configurações ficam nesta máquina; senhas e chaves, no cofre
 criptografado (`vault.bin`), com a chave no cofre do sistema operacional.
 
 ## Licença

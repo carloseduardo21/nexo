@@ -229,6 +229,9 @@ export function installDevMock() {
         if (index >= 0) hosts[index] = { ...hosts[index], ...a?.host };
         return a?.host;
       }
+      // `?update=1`: há uma versão nova (toast de atualização uns segundos depois de abrir).
+      case 'plugin:updater|check':
+        return new URLSearchParams(location.search).has('update') ? { rid: 1, currentVersion: '0.3.0', version: '0.4.0', rawJson: {} } : null;
       default:
         return null;
     }
