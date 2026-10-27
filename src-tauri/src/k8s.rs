@@ -408,6 +408,18 @@ mod tests {
         assert!(checked("..").is_err());
     }
 
+    /// Os nomes que o frontend manda (`KubeKind` em backend.ts).
+    #[test]
+    fn kind_names() {
+        let names = ["pod", "deployment", "statefulSet", "daemonSet", "replicaSet", "job", "cronJob", "service", "ingress",
+            "networkPolicy", "configMap", "secret", "serviceAccount", "horizontalPodAutoscaler", "persistentVolumeClaim",
+            "persistentVolume", "storageClass", "node", "namespace", "event"];
+        for name in names {
+            let kind: Kind = serde_json::from_value(name.into()).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(kind.path(Some("x")).is_ok());
+        }
+    }
+
     #[test]
     fn table() {
         let text = r#"{"kind":"Table","apiVersion":"meta.k8s.io/v1","metadata":{"resourceVersion":"1"},

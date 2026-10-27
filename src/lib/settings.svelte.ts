@@ -13,6 +13,8 @@ export interface Settings {
   startWithTerminal: boolean;
   /** Lista de hosts ao lado das sessões. */
   hostsSidebar: boolean;
+  /** Kubeconfig da página Kubernetes; '' = o padrão (KUBECONFIG ou ~/.kube/config). */
+  kubeconfig: string;
 }
 
 export const DEFAULT_FONT = '"Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, "DejaVu Sans Mono", monospace';
@@ -25,6 +27,7 @@ const defaults: Settings = {
   cursorBlink: true,
   startWithTerminal: false,
   hostsSidebar: true,
+  kubeconfig: '',
 };
 
 export const settings = $state<Settings>({ ...defaults });

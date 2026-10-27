@@ -8,6 +8,7 @@
   import CredentialsPage from './components/CredentialsPage.svelte';
   import TunnelsPage from './components/TunnelsPage.svelte';
   import SettingsPage from './components/SettingsPage.svelte';
+  import KubernetesPage from './components/KubernetesPage.svelte';
   import PaneTree from './components/PaneTree.svelte';
   import Dialogs from './components/Dialogs.svelte';
   import SftpPanel from './components/SftpPanel.svelte';
@@ -39,6 +40,8 @@
         <CredentialsPage />
       {:else if app.view === 'tunnels'}
         <TunnelsPage />
+      {:else if app.view === 'kubernetes'}
+        <KubernetesPage />
       {:else if app.view === 'settings'}
         <SettingsPage />
       {/if}

@@ -80,6 +80,82 @@ const containers = [
   container('prometheus', 'prom/prometheus:v2.54.1', 'running', 'Up 6 hours', 'monitoring', 2.1, '220.9MiB / 7.6GiB'),
 ];
 
+// Kubernetes: dois contextos, alguns namespaces e tabelas como as do servidor.
+const kubeContexts = {
+  source: 'C:\\Users\\carlos\\.kube\\config',
+  current: 'prod-sa-east-1',
+  contexts: [
+    { name: 'prod-sa-east-1', cluster: 'prod', user: 'carlos', namespace: '', server: 'https://k8s.empresa.com:6443' },
+    { name: 'kind-treino', cluster: 'kind-treino', user: 'kind-treino', namespace: '', server: 'https://127.0.0.1:38927' },
+  ],
+};
+const col = (name: string, priority = 0) => ({ name, type: 'string', priority });
+const kubeRow = (namespace: string, cells: unknown[]) => ({ name: String(cells[0]), namespace, uid: `${namespace}/${cells[0]}`, cells });
+const kubeTables: Record<string, { columns: ReturnType<typeof col>[]; rows: ReturnType<typeof kubeRow>[] }> = {
+  pod: {
+    columns: [col('Name'), col('Ready'), col('Status'), col('Restarts'), col('Age'), col('IP', 1), col('Node', 1)],
+    rows: [
+      kubeRow('loja', ['loja-api-7d9f8b6c5-2xkqp', '1/1', 'Running', 0, '2d4h', '10.244.1.12', 'node-a']),
+      kubeRow('loja', ['loja-api-7d9f8b6c5-h8mzt', '1/1', 'Running', '1 (3h ago)', '2d4h', '10.244.2.7', 'node-b']),
+      kubeRow('loja', ['loja-worker-5c7b9d4f8-qq2lz', '0/1', 'CrashLoopBackOff', '14 (2m ago)', '51m', '10.244.2.9', 'node-b']),
+      kubeRow('loja', ['loja-migrate-29844-x7k2d', '0/1', 'Completed', 0, '6h', '10.244.1.30', 'node-a']),
+      kubeRow('monitoring', ['prometheus-0', '2/2', 'Running', 0, '12d', '10.244.1.4', 'node-a']),
+      kubeRow('monitoring', ['grafana-6f6d9c7b8-5vtnm', '1/1', 'Running', 0, '12d', '10.244.2.3', 'node-b']),
+      kubeRow('kube-system', ['coredns-559f6c778d-r2bwf', '1/1', 'Running', '2 (14h ago)', '40d', '10.244.0.3', 'control-plane']),
+      kubeRow('kube-system', ['metrics-server-85b7d694d7-9m4cv', '0/1', 'Pending', 0, '8s', '<none>', '<none>']),
+    ],
+  },
+  deployment: {
+    columns: [col('Name'), col('Ready'), col('Up-to-date'), col('Available'), col('Age'), col('Images', 1)],
+    rows: [
+      kubeRow('loja', ['loja-api', '2/2', 2, 2, '30d', 'ghcr.io/empresa/loja-api:1.8.2']),
+      kubeRow('loja', ['loja-worker', '0/1', 1, 0, '30d', 'ghcr.io/empresa/loja-api:1.8.2']),
+      kubeRow('monitoring', ['grafana', '1/1', 1, 1, '12d', 'grafana/grafana:11.2.0']),
+    ],
+  },
+  node: {
+    columns: [col('Name'), col('Status'), col('Roles'), col('Age'), col('Version')],
+    rows: [
+      kubeRow('', ['control-plane', 'Ready', 'control-plane', '40d', 'v1.34.1']),
+      kubeRow('', ['node-a', 'Ready', '<none>', '40d', 'v1.34.1']),
+      kubeRow('', ['node-b', 'Ready,SchedulingDisabled', '<none>', '40d', 'v1.34.1']),
+    ],
+  },
+};
+const kubeYaml = `apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: "2026-10-25T14:02:11Z"
+  labels:
+    app: loja-api
+    pod-template-hash: 7d9f8b6c5
+  name: loja-api-7d9f8b6c5-2xkqp
+  namespace: loja
+spec:
+  containers:
+  - image: ghcr.io/empresa/loja-api:1.8.2
+    name: api
+    ports:
+    - containerPort: 8080
+      protocol: TCP
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      periodSeconds: 10
+  restartPolicy: Always
+status:
+  phase: Running
+  podIP: 10.244.1.12
+  qosClass: BestEffort
+  startTime: "2026-10-25T14:02:11Z"
+`;
+
+function kubeList(kind: string, namespace: string | null) {
+  const table = kubeTables[kind] ?? { columns: [col('Name'), col('Age')], rows: [kubeRow('loja', [`exemplo-${kind.toLowerCase()}`, '3d'])] };
+  return { ...table, rows: table.rows.filter((r) => !namespace || !r.namespace || r.namespace === namespace), truncated: false };
+}
+
 export function installDevMock() {
   mockWindows('main');
   const params = new URLSearchParams(location.search);
@@ -116,6 +192,14 @@ export function installDevMock() {
         if (denied && !a?.sudo) return Promise.reject({ kind: 'permission', message: 'sem permissão para usar o Docker (o usuário não está no grupo docker)' });
         if (denied && !a?.sudo.password) return Promise.reject({ kind: 'needSudoPassword', wrong: false });
         return cmd === 'docker_list' ? containers : null;
+      case 'k8s_contexts':
+        return kubeContexts;
+      case 'k8s_namespaces':
+        return ['default', 'kube-system', 'loja', 'monitoring'];
+      case 'k8s_list':
+        return kubeList(a?.kind, a?.namespace);
+      case 'k8s_yaml':
+        return kubeYaml;
       case 'host_save': {
         const index = hosts.findIndex((h) => h.id === a?.host.id);
         if (index >= 0) hosts[index] = { ...hosts[index], ...a?.host };

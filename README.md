@@ -104,6 +104,21 @@ O mock fica fora do build de produção.
   com outra senha), a digitada fica só na memória — a do login não é trocada. Logs e shell rodam
   `sudo docker …` no terminal, com a sugestão de senha salva no prompt do sudo.
 
+## Kubernetes
+
+- Página **Kubernetes** na barra da esquerda, no estilo do Lens. Lê o kubeconfig padrão
+  (`KUBECONFIG` ou `~/.kube/config`, em `%USERPROFILE%\.kube\config` no Windows) ou outro
+  arquivo escolhido no menu `…` (por exemplo `\\wsl.localhost\Ubuntu\home\<usuário>\.kube\config`).
+  Plugins `exec` de autenticação (`aws`, `gke-gcloud-auth-plugin`, `kubelogin`…) funcionam como no `kubectl`.
+- Escolha de contexto e namespace (ou todos), e os recursos mais usados: pods, deployments,
+  statefulsets, daemonsets, jobs, services, ingresses, configmaps, secrets, PVCs, nodes, eventos…
+  As colunas são as do `kubectl get`, vindas do próprio cluster (botão de colunas = `-o wide`);
+  estados com cor, filtro e ordenação. A lista visível atualiza a cada 5 s.
+- Clicar num item mostra o YAML (sem `managedFields`). Em Secrets os valores ficam escondidos
+  até clicar em revelar.
+- Por enquanto só leitura. Próximas etapas: logs, shell e port-forward de pods, escalar e
+  reiniciar workloads, editar o YAML.
+
 ## Túneis
 
 - Seção **Túneis** na sidebar: `+` cria, ▶/■ inicia e para, lápis edita.

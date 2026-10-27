@@ -72,7 +72,7 @@ export type Dialog =
   | { type: 'palette' };
 
 /** Página principal: as de gerenciamento, ou as sessões abertas (abas). */
-export type View = 'hosts' | 'credentials' | 'tunnels' | 'settings' | 'session';
+export type View = 'hosts' | 'credentials' | 'tunnels' | 'kubernetes' | 'settings' | 'session';
 
 export const app = $state({
   view: 'hosts' as View,

@@ -130,6 +130,52 @@ export interface RemoteEntry {
 }
 
 /** Leitura do servidor (`hostinfo.rs`). Bytes; CPU e rede são contadores desde o boot. */
+/** Tipos de recurso do Kubernetes que o backend sabe listar (`k8s::Kind`). */
+export type KubeKind =
+  | 'pod'
+  | 'deployment'
+  | 'statefulSet'
+  | 'daemonSet'
+  | 'replicaSet'
+  | 'job'
+  | 'cronJob'
+  | 'service'
+  | 'ingress'
+  | 'networkPolicy'
+  | 'configMap'
+  | 'secret'
+  | 'serviceAccount'
+  | 'horizontalPodAutoscaler'
+  | 'persistentVolumeClaim'
+  | 'persistentVolume'
+  | 'storageClass'
+  | 'node'
+  | 'namespace'
+  | 'event';
+
+export interface KubeContext {
+  name: string;
+  cluster: string;
+  user: string;
+  /** Namespace padrão do contexto ('' = nenhum). */
+  namespace: string;
+  server: string;
+}
+
+export interface KubeContexts {
+  /** Arquivo (ou lista do KUBECONFIG) lido. */
+  source: string;
+  current: string | null;
+  contexts: KubeContext[];
+}
+
+/** Lista no formato Table do servidor: as colunas do `kubectl get` (priority > 0 = `-o wide`). */
+export interface KubeTable {
+  columns: { name: string; type: string; priority: number }[];
+  rows: { name: string; namespace: string; uid: string; cells: unknown[] }[];
+  truncated: boolean;
+}
+
 export interface HostMetrics {
   hostname: string;
   kernel: string;
@@ -303,6 +349,16 @@ export const backend = {
   dockerList: (id: number, sudo?: Sudo) => invoke<Container[]>('docker_list', { id, sudo }),
   dockerAction: (id: number, container: string, action: ContainerAction, sudo?: Sudo) =>
     invoke<void>('docker_action', { id, container, action, sudo }),
+
+  /** `kubeconfig` vazio = o padrão (KUBECONFIG ou ~/.kube/config). Relê o arquivo. */
+  k8sContexts: (kubeconfig: string) => invoke<KubeContexts>('k8s_contexts', { kubeconfig }),
+  k8sNamespaces: (kubeconfig: string, context: string) => invoke<string[]>('k8s_namespaces', { kubeconfig, context }),
+  /** `namespace` '' = todos. */
+  k8sList: (kubeconfig: string, context: string, kind: KubeKind, namespace: string) =>
+    invoke<KubeTable>('k8s_list', { kubeconfig, context, kind, namespace: namespace || null }),
+  /** Secrets vêm com os valores escondidos, a não ser que `reveal`. */
+  k8sYaml: (kubeconfig: string, context: string, kind: KubeKind, namespace: string, name: string, reveal: boolean) =>
+    invoke<string>('k8s_yaml', { kubeconfig, context, kind, namespace: namespace || null, name, reveal }),
 
   sftpHome: (id: number) => invoke<string>('sftp_home', { id }),
   sftpList: (id: number, path: string) => invoke<RemoteEntry[]>('sftp_list', { id, path }),

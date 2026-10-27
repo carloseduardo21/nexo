@@ -6,6 +6,7 @@
   import PanelLeftIcon from '@lucide/svelte/icons/panel-left';
   import FolderIcon from '@lucide/svelte/icons/folder-open';
   import ActivityIcon from '@lucide/svelte/icons/activity';
+  import ShipWheelIcon from '@lucide/svelte/icons/ship-wheel';
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
   import { app, showView, type View } from '../lib/state.svelte';
   import { settings, updateSettings } from '../lib/settings.svelte';
@@ -16,6 +17,7 @@
     { view: 'hosts', label: 'Hosts', icon: ServerIcon },
     { view: 'credentials', label: 'Credenciais', icon: KeyRoundIcon },
     { view: 'tunnels', label: 'Túneis', icon: WaypointsIcon },
+    { view: 'kubernetes', label: 'Kubernetes', icon: ShipWheelIcon },
   ];
 
   const runningTunnels = $derived(Object.values(app.tunnelStatus).filter((s) => s.state === 'running').length);
