@@ -195,9 +195,51 @@ impl Kind {
     }
 }
 
+/// Um tipo conhecido ou um custom resource (de um CRD do cluster).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum Resource {
+    Builtin(Kind),
+    Custom(Custom),
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Custom {
+    pub group: String,
+    pub version: String,
+    pub plural: String,
+    pub namespaced: bool,
+}
+
+impl From<Kind> for Resource {
+    fn from(kind: Kind) -> Self {
+        Resource::Builtin(kind)
+    }
+}
+
+impl Resource {
+    fn path(&self, namespace: Option<&str>) -> Result<String, String> {
+        match self {
+            Resource::Builtin(kind) => kind.path(namespace),
+            Resource::Custom(c) => {
+                let base = format!("/apis/{}/{}", checked(&c.group)?, checked(&c.version)?);
+                Ok(match namespace.filter(|_| c.namespaced) {
+                    Some(ns) => format!("{base}/namespaces/{}/{}", checked(ns)?, checked(&c.plural)?),
+                    None => format!("{base}/{}", checked(&c.plural)?),
+                })
+            }
+        }
+    }
+
+    fn is(&self, kind: Kind) -> bool {
+        *self == Resource::Builtin(kind)
+    }
+}
+
 /// Caminho de um objeto.
-pub(crate) fn object_path(kind: Kind, namespace: Option<&str>, name: &str) -> Result<String, String> {
-    Ok(format!("{}/{}", kind.path(namespace)?, checked(name)?))
+pub(crate) fn object_path(resource: &Resource, namespace: Option<&str>, name: &str) -> Result<String, String> {
+    Ok(format!("{}/{}", resource.path(namespace)?, checked(name)?))
 }
 
 /// Nomes e namespaces viram parte da URL: só os caracteres que o Kubernetes aceita neles.
@@ -307,8 +349,8 @@ fn get(path: String, accept: &str) -> Result<http::Request<Vec<u8>>, String> {
         .map_err(|e| e.to_string())
 }
 
-pub async fn list(client: &Client, kind: Kind, namespace: Option<&str>) -> Result<Table, String> {
-    let path = format!("{}?includeObject=Metadata&limit={LIST_LIMIT}", kind.path(namespace)?);
+pub async fn list(client: &Client, resource: &Resource, namespace: Option<&str>) -> Result<Table, String> {
+    let path = format!("{}?includeObject=Metadata&limit={LIST_LIMIT}", resource.path(namespace)?);
     // O `application/json` no fim é o plano B de servidores sem Table (muito antigos).
     let text = client
         .request_text(get(path, "application/json;as=Table;v=v1;g=meta.k8s.io,application/json")?)
@@ -334,10 +376,49 @@ pub async fn namespaces(client: &Client) -> Result<Vec<String>, String> {
 
 /// O objeto em YAML, como o `kubectl get -o yaml` (sem `managedFields`). Em Secrets, os
 /// valores ficam escondidos a não ser que `reveal`.
-pub async fn yaml(client: &Client, kind: Kind, namespace: Option<&str>, name: &str, reveal: bool) -> Result<String, String> {
-    let path = format!("{}/{}", kind.path(namespace)?, checked(name)?);
-    let mut object: Value = client.request(get(path, "application/json")?).await.map_err(describe)?;
-    to_yaml(&mut object, kind == Kind::Secret && !reveal)
+pub async fn yaml(client: &Client, resource: &Resource, namespace: Option<&str>, name: &str, reveal: bool) -> Result<String, String> {
+    let mut object = get_json(client, object_path(resource, namespace, name)?).await?;
+    to_yaml(&mut object, resource.is(Kind::Secret) && !reveal)
+}
+
+/// Substitui o objeto pelo YAML editado (PUT). O `resourceVersion` que veio no YAML faz o
+/// servidor recusar se alguém mudou o objeto nesse meio-tempo. Devolve o YAML novo.
+pub async fn apply(client: &Client, resource: &Resource, namespace: Option<&str>, name: &str, text: &str) -> Result<String, String> {
+    let object = edited(resource, namespace, name, text)?;
+    let request = http::Request::put(object_path(resource, namespace, name)?)
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(http::header::ACCEPT, "application/json")
+        .body(object.to_string().into_bytes())
+        .map_err(|e| e.to_string())?;
+    let mut saved: Value = client.request(request).await.map_err(|e| match e {
+        kube::Error::Api(status) if status.code == 409 => {
+            "o objeto mudou desde que foi aberto: recarregue o YAML e edite de novo".to_owned()
+        }
+        e => describe(e),
+    })?;
+    to_yaml(&mut saved, false)
+}
+
+/// Lê o YAML editado e confere que ainda é o mesmo objeto (o nome e o namespace não mudam).
+fn edited(resource: &Resource, namespace: Option<&str>, name: &str, text: &str) -> Result<Value, String> {
+    let mut object: Value = serde_saphyr::from_str(text).map_err(|e| format!("YAML inválido: {e}"))?;
+    if !object.is_object() {
+        return Err("o YAML precisa ser um objeto".into());
+    }
+    if object["metadata"]["name"].as_str() != Some(name) {
+        return Err(format!("o nome não pode mudar (era {name})"));
+    }
+    if let Some(ns) = namespace {
+        match object["metadata"]["namespace"].as_str() {
+            Some(other) if other != ns => return Err(format!("o namespace não pode mudar (era {ns})")),
+            Some(_) => {}
+            None => object["metadata"]["namespace"] = ns.into(),
+        }
+    }
+    if resource.is(Kind::Secret) && text.contains(HIDDEN) {
+        return Err("revele os valores do Secret antes de editar".into());
+    }
+    Ok(object)
 }
 
 pub const HIDDEN: &str = "••••••••";
@@ -393,11 +474,15 @@ pub enum Action {
     Restart,
 }
 
-pub async fn act(client: &Client, kind: Kind, namespace: Option<&str>, name: &str, action: Action) -> Result<(), String> {
-    let path = object_path(kind, namespace, name)?;
+pub async fn act(client: &Client, resource: &Resource, namespace: Option<&str>, name: &str, action: Action) -> Result<(), String> {
+    let path = object_path(resource, namespace, name)?;
+    let kind = match resource {
+        Resource::Builtin(kind) => Some(*kind),
+        Resource::Custom(_) => None,
+    };
     match action {
         Action::Delete => {
-            if matches!(kind, Kind::Namespace | Kind::Node | Kind::PersistentVolume | Kind::StorageClass) {
+            if matches!(kind, Some(Kind::Namespace | Kind::Node | Kind::PersistentVolume | Kind::StorageClass)) {
                 return Err("excluir este tipo só pelo kubectl".into());
             }
             let request = http::Request::delete(path)
@@ -407,13 +492,13 @@ pub async fn act(client: &Client, kind: Kind, namespace: Option<&str>, name: &st
             send(client, request).await
         }
         Action::Scale { replicas } => {
-            if !matches!(kind, Kind::Deployment | Kind::StatefulSet | Kind::ReplicaSet) {
+            if !matches!(kind, Some(Kind::Deployment | Kind::StatefulSet | Kind::ReplicaSet)) {
                 return Err("este tipo não escala".into());
             }
             send(client, merge_patch(format!("{path}/scale"), &serde_json::json!({ "spec": { "replicas": replicas } }))?).await
         }
         Action::Restart => {
-            if !matches!(kind, Kind::Deployment | Kind::StatefulSet | Kind::DaemonSet) {
+            if !matches!(kind, Some(Kind::Deployment | Kind::StatefulSet | Kind::DaemonSet)) {
                 return Err("este tipo não reinicia".into());
             }
             let now = k8s_openapi::jiff::Timestamp::now().to_string();
@@ -434,7 +519,7 @@ pub struct ContainerInfo {
 /// Containers de um pod (os de init por último) e o padrão (anotação
 /// `kubectl.kubernetes.io/default-container` ou o primeiro).
 pub async fn containers(client: &Client, namespace: &str, pod: &str) -> Result<(Vec<ContainerInfo>, String), String> {
-    let object = get_json(client, object_path(Kind::Pod, Some(namespace), pod)?).await?;
+    let object = get_json(client, object_path(&Kind::Pod.into(), Some(namespace), pod)?).await?;
     Ok(pod_containers(&object))
 }
 
@@ -471,7 +556,7 @@ pub async fn ports(client: &Client, kind: Kind, namespace: &str, name: &str) -> 
     if !forwardable(kind) {
         return Err("port-forward só em pods, services e workloads".into());
     }
-    let object = get_json(client, object_path(kind, Some(namespace), name)?).await?;
+    let object = get_json(client, object_path(&kind.into(), Some(namespace), name)?).await?;
     Ok(object_ports(kind, &object))
 }
 
@@ -508,7 +593,7 @@ pub async fn resolve(client: &Client, kind: Kind, namespace: &str, name: &str, p
     if !forwardable(kind) {
         return Err("port-forward só em pods, services e workloads".into());
     }
-    let object = get_json(client, object_path(kind, Some(namespace), name)?).await?;
+    let object = get_json(client, object_path(&kind.into(), Some(namespace), name)?).await?;
     let (selector, target) = if kind == Kind::Service {
         let entry = object["spec"]["ports"]
             .as_array()
@@ -567,6 +652,130 @@ fn encode(text: &str) -> String {
             _ => format!("%{b:02X}"),
         })
         .collect()
+}
+
+/// Uso atual de um pod (soma dos containers) ou node, pelo metrics-server.
+#[derive(Serialize, Debug, PartialEq, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub struct Usage {
+    /// Milicores.
+    pub cpu: f64,
+    /// Bytes.
+    pub memory: f64,
+}
+
+/// Uso por `namespace/nome` (pods) ou `nome` (nodes). Erro se o cluster não tem metrics-server.
+pub async fn metrics(client: &Client, nodes: bool, namespace: Option<&str>) -> Result<HashMap<String, Usage>, String> {
+    let path = match (nodes, namespace) {
+        (true, _) => "/apis/metrics.k8s.io/v1beta1/nodes".to_owned(),
+        (false, Some(ns)) => format!("/apis/metrics.k8s.io/v1beta1/namespaces/{}/pods", checked(ns)?),
+        (false, None) => "/apis/metrics.k8s.io/v1beta1/pods".to_owned(),
+    };
+    Ok(parse_metrics(&get_json(client, path).await?))
+}
+
+fn parse_metrics(list: &Value) -> HashMap<String, Usage> {
+    let usage_of = |u: &Value| Usage {
+        cpu: u["cpu"].as_str().and_then(cpu_millis).unwrap_or(0.0),
+        memory: u["memory"].as_str().and_then(bytes).unwrap_or(0.0),
+    };
+    list["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|item| {
+            let meta = &item["metadata"];
+            let name = meta["name"].as_str().unwrap_or_default();
+            let key = match meta["namespace"].as_str() {
+                Some(ns) => format!("{ns}/{name}"),
+                None => name.to_owned(),
+            };
+            let usage = match item["containers"].as_array() {
+                Some(containers) => containers.iter().map(|c| usage_of(&c["usage"])).fold(Usage { cpu: 0.0, memory: 0.0 }, |a, b| Usage {
+                    cpu: a.cpu + b.cpu,
+                    memory: a.memory + b.memory,
+                }),
+                None => usage_of(&item["usage"]),
+            };
+            (key, usage)
+        })
+        .collect()
+}
+
+/// "250m" → 250; "1" → 1000; "123456789n" → 123,456789.
+fn cpu_millis(q: &str) -> Option<f64> {
+    let (number, factor) = match q.as_bytes().last()? {
+        b'n' => (&q[..q.len() - 1], 1e-6),
+        b'u' => (&q[..q.len() - 1], 1e-3),
+        b'm' => (&q[..q.len() - 1], 1.0),
+        _ => (q, 1000.0),
+    };
+    Some(number.parse::<f64>().ok()? * factor)
+}
+
+/// "128Mi", "1Gi", "500k", "1e3", "12345" → bytes.
+fn bytes(q: &str) -> Option<f64> {
+    const SUFFIXES: [(&str, f64); 12] = [
+        ("Ki", 1024.0),
+        ("Mi", 1048576.0),
+        ("Gi", 1073741824.0),
+        ("Ti", 1099511627776.0),
+        ("Pi", 1125899906842624.0),
+        ("Ei", 1152921504606846976.0),
+        ("k", 1e3),
+        ("M", 1e6),
+        ("G", 1e9),
+        ("T", 1e12),
+        ("P", 1e15),
+        ("E", 1e18),
+    ];
+    for (suffix, factor) in SUFFIXES {
+        if let Some(number) = q.strip_suffix(suffix) {
+            return Some(number.parse::<f64>().ok()? * factor);
+        }
+    }
+    q.parse().ok()
+}
+
+/// Um custom resource do cluster (de um CRD), na versão que o servidor guarda.
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomInfo {
+    pub group: String,
+    pub version: String,
+    pub plural: String,
+    pub kind: String,
+    pub namespaced: bool,
+}
+
+pub async fn custom_resources(client: &Client) -> Result<Vec<CustomInfo>, String> {
+    let list = get_json(client, "/apis/apiextensions.k8s.io/v1/customresourcedefinitions".into()).await?;
+    Ok(parse_crds(&list))
+}
+
+fn parse_crds(list: &Value) -> Vec<CustomInfo> {
+    let mut crds: Vec<CustomInfo> = list["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|crd| {
+            let spec = &crd["spec"];
+            let versions = spec["versions"].as_array()?;
+            let version = versions
+                .iter()
+                .find(|v| v["storage"] == true && v["served"] == true)
+                .or_else(|| versions.iter().find(|v| v["served"] == true))?;
+            Some(CustomInfo {
+                group: spec["group"].as_str()?.to_owned(),
+                version: version["name"].as_str()?.to_owned(),
+                plural: spec["names"]["plural"].as_str()?.to_owned(),
+                kind: spec["names"]["kind"].as_str()?.to_owned(),
+                namespaced: spec["scope"] == "Namespaced",
+            })
+        })
+        .collect();
+    crds.sort_by(|a, b| (&a.group, &a.kind).cmp(&(&b.group, &b.kind)));
+    crds
 }
 
 /// Mensagem legível para os erros mais comuns.
@@ -686,6 +895,56 @@ mod tests {
     }
 
     #[test]
+    fn custom_paths() {
+        let custom = Resource::Custom(Custom { group: "cert-manager.io".into(), version: "v1".into(), plural: "certificates".into(), namespaced: true });
+        assert_eq!(custom.path(Some("web")).unwrap(), "/apis/cert-manager.io/v1/namespaces/web/certificates");
+        assert_eq!(custom.path(None).unwrap(), "/apis/cert-manager.io/v1/certificates");
+        let evil = Resource::Custom(Custom { group: "a/../b".into(), version: "v1".into(), plural: "x".into(), namespaced: false });
+        assert!(evil.path(None).is_err());
+        // O frontend manda o tipo como texto (conhecido) ou objeto (custom).
+        assert_eq!(serde_json::from_str::<Resource>(r#""pod""#).unwrap(), Resource::Builtin(Kind::Pod));
+        assert_eq!(serde_json::from_str::<Resource>(r#"{"group":"cert-manager.io","version":"v1","plural":"certificates","namespaced":true}"#).unwrap(), custom);
+    }
+
+    #[test]
+    fn quantities() {
+        assert_eq!(cpu_millis("250m"), Some(250.0));
+        assert_eq!(cpu_millis("2"), Some(2000.0));
+        assert!((cpu_millis("123456789n").unwrap() - 123.456789).abs() < 1e-9);
+        assert_eq!(bytes("128Mi"), Some(134217728.0));
+        assert_eq!(bytes("1k"), Some(1000.0));
+        assert_eq!(bytes("4096"), Some(4096.0));
+        let list = serde_json::json!({"items": [
+            {"metadata": {"name": "web", "namespace": "loja"}, "containers": [{"usage": {"cpu": "100m", "memory": "64Mi"}}, {"usage": {"cpu": "50m", "memory": "16Mi"}}]},
+            {"metadata": {"name": "node-a"}, "usage": {"cpu": "1500m", "memory": "2Gi"}}]});
+        let usage = parse_metrics(&list);
+        assert_eq!(usage["loja/web"], Usage { cpu: 150.0, memory: 80.0 * 1048576.0 });
+        assert_eq!(usage["node-a"].cpu, 1500.0);
+    }
+
+    #[test]
+    fn crds() {
+        let list = serde_json::json!({"items": [{"spec": {"group": "cert-manager.io", "scope": "Namespaced",
+            "names": {"plural": "certificates", "kind": "Certificate"},
+            "versions": [{"name": "v1alpha2", "served": false, "storage": false}, {"name": "v1", "served": true, "storage": true}]}}]});
+        assert_eq!(parse_crds(&list), [CustomInfo { group: "cert-manager.io".into(), version: "v1".into(), plural: "certificates".into(), kind: "Certificate".into(), namespaced: true }]);
+    }
+
+    #[test]
+    fn edit_checks() {
+        let cm: Resource = Kind::ConfigMap.into();
+        let text = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\ndata:\n  a: b\n";
+        let object = edited(&cm, Some("web"), "app", text).unwrap();
+        assert_eq!(object["metadata"]["namespace"], "web");
+        assert!(edited(&cm, Some("web"), "outro", text).unwrap_err().contains("nome"));
+        assert!(edited(&cm, Some("prod"), "app", &text.replace("name: app", "name: app\n  namespace: web")).is_err());
+        assert!(edited(&cm, None, "app", "a: [").unwrap_err().starts_with("YAML inválido"));
+        let secret: Resource = Kind::Secret.into();
+        let hidden = format!("apiVersion: v1\nkind: Secret\nmetadata:\n  name: app\ndata:\n  a: {HIDDEN}\n");
+        assert!(edited(&secret, None, "app", &hidden).unwrap_err().contains("revele"));
+    }
+
+    #[test]
     fn yaml_multiline() {
         let mut config = serde_json::json!({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "app"},
           "data": {"nginx.conf": "server {\n  listen 80;\n}\n"}});
@@ -711,20 +970,20 @@ mod live {
         let client = kube.client(None, &current).await.unwrap();
         let names = namespaces(&client).await.unwrap();
         assert!(names.contains(&"kube-system".to_owned()), "{names:?}");
-        let pods = list(&client, Kind::Pod, Some("kube-system")).await.unwrap();
+        let pods = list(&client, &Kind::Pod.into(), Some("kube-system")).await.unwrap();
         println!("{:?}", pods.columns.iter().map(|c| &c.name).collect::<Vec<_>>());
         assert!(pods.columns.iter().any(|c| c.name == "Status"));
         assert!(!pods.rows.is_empty());
         assert!(pods.rows.iter().all(|r| r.namespace == "kube-system" && !r.name.is_empty()));
-        let nodes = list(&client, Kind::Node, None).await.unwrap();
+        let nodes = list(&client, &Kind::Node.into(), None).await.unwrap();
         assert!(!nodes.rows.is_empty());
-        let all = list(&client, Kind::Deployment, None).await.unwrap();
+        let all = list(&client, &Kind::Deployment.into(), None).await.unwrap();
         println!("{} deployments em todos os namespaces", all.rows.len());
         let pod = &pods.rows[0];
-        let text = yaml(&client, Kind::Pod, Some("kube-system"), &pod.name, false).await.unwrap();
+        let text = yaml(&client, &Kind::Pod.into(), Some("kube-system"), &pod.name, false).await.unwrap();
         assert!(text.contains(&format!("name: {}", pod.name)));
         assert!(!text.contains("managedFields"));
-        let err = yaml(&client, Kind::Pod, Some("kube-system"), "nao-existe", false).await.unwrap_err();
+        let err = yaml(&client, &Kind::Pod.into(), Some("kube-system"), "nao-existe", false).await.unwrap_err();
         assert!(err.starts_with("não encontrado"), "{err}");
     }
 }
@@ -749,7 +1008,7 @@ mod live_actions {
     /// Um pod do nginx pronto (espera o rollout de um teste anterior).
     async fn web_pod(client: &Client) -> String {
         for _ in 0..120 {
-            let table = list(client, Kind::Pod, Some(NS)).await.unwrap();
+            let table = list(client, &Kind::Pod.into(), Some(NS)).await.unwrap();
             let ready = table.rows.iter().filter(|r| r.name.starts_with("web-")).collect::<Vec<_>>();
             if let [only] = ready[..] {
                 if only.cells[1] == "1/1" && only.cells[2] == "Running" {
@@ -811,6 +1070,8 @@ mod live_actions {
         let (exit, code) = exit_capture();
         let mode = crate::k8s_term::Mode::Shell;
         let term = crate::k8s_term::open(client.clone(), NS, &pod, &default, mode, 100, 30, data, exit).await.unwrap();
+        // O tamanho vai por outro canal que o comando: dá um tempo para ele chegar antes.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         term.write(b"echo nexo-$((40+2)); stty size; exit 3\n").unwrap();
         wait_for(|| code.lock().unwrap().is_some()).await;
         let text = String::from_utf8_lossy(&out.lock().unwrap()).into_owned();
@@ -867,20 +1128,62 @@ mod live_actions {
 
     #[tokio::test]
     #[ignore]
+    async fn live_edit() {
+        let client = client().await;
+        let deploy: Resource = Kind::Deployment.into();
+        let original = yaml(&client, &deploy, Some(NS), "web", false).await.unwrap();
+        let changed = original.replacen("  replicas: 1\n", "  replicas: 1\n  minReadySeconds: 3\n", 1);
+        assert_ne!(changed, original);
+        let saved = apply(&client, &deploy, Some(NS), "web", &changed).await.unwrap();
+        assert!(saved.contains("minReadySeconds: 3"), "{saved}");
+        // O YAML antigo tem um resourceVersion velho: o servidor recusa.
+        let err = apply(&client, &deploy, Some(NS), "web", &changed).await.unwrap_err();
+        assert!(err.contains("mudou desde que foi aberto"), "{err}");
+        let back = saved.replace("  minReadySeconds: 3\n", "");
+        apply(&client, &deploy, Some(NS), "web", &back).await.unwrap();
+        // kind não vem com metrics-server; os CRDs podem ser zero.
+        match metrics(&client, false, Some(NS)).await {
+            Ok(usage) => println!("métricas: {usage:?}"),
+            Err(e) => println!("sem metrics-server: {e}"),
+        }
+        println!("{} CRDs", custom_resources(&client).await.unwrap().len());
+    }
+
+    /// Precisa do CRD de teste `widgets.nexo.test` (com a coluna Color) e de um Widget `azul`.
+    #[tokio::test]
+    #[ignore]
+    async fn live_custom() {
+        let client = client().await;
+        let info = custom_resources(&client).await.unwrap().into_iter().find(|c| c.group == "nexo.test").expect("sem o CRD de teste");
+        assert_eq!((info.kind.as_str(), info.plural.as_str(), info.version.as_str(), info.namespaced), ("Widget", "widgets", "v1", true));
+        let widget = Resource::Custom(Custom { group: info.group, version: info.version, plural: info.plural, namespaced: true });
+        let table = list(&client, &widget, Some(NS)).await.unwrap();
+        assert!(table.columns.iter().any(|c| c.name == "Color"));
+        assert_eq!(table.rows[0].name, "azul");
+        let all = list(&client, &widget, None).await.unwrap();
+        assert_eq!(all.rows[0].namespace, NS);
+        let text = yaml(&client, &widget, Some(NS), "azul", false).await.unwrap();
+        let saved = apply(&client, &widget, Some(NS), "azul", &text.replace("color: blue", "color: navy")).await.unwrap();
+        assert!(saved.contains("color: navy"));
+        apply(&client, &widget, Some(NS), "azul", &saved.replace("color: navy", "color: blue")).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore]
     async fn live_actions() {
         let client = client().await;
-        act(&client, Kind::Deployment, Some(NS), "web", Action::Scale { replicas: 2 }).await.unwrap();
-        let text = yaml(&client, Kind::Deployment, Some(NS), "web", false).await.unwrap();
+        act(&client, &Kind::Deployment.into(), Some(NS), "web", Action::Scale { replicas: 2 }).await.unwrap();
+        let text = yaml(&client, &Kind::Deployment.into(), Some(NS), "web", false).await.unwrap();
         assert!(text.contains("replicas: 2"), "{text}");
-        act(&client, Kind::Deployment, Some(NS), "web", Action::Restart).await.unwrap();
-        let text = yaml(&client, Kind::Deployment, Some(NS), "web", false).await.unwrap();
+        act(&client, &Kind::Deployment.into(), Some(NS), "web", Action::Restart).await.unwrap();
+        let text = yaml(&client, &Kind::Deployment.into(), Some(NS), "web", false).await.unwrap();
         assert!(text.contains("kubectl.kubernetes.io/restartedAt"), "{text}");
-        act(&client, Kind::Deployment, Some(NS), "web", Action::Scale { replicas: 1 }).await.unwrap();
-        assert!(act(&client, Kind::Pod, Some(NS), "web", Action::Scale { replicas: 1 }).await.is_err());
-        assert!(act(&client, Kind::Namespace, None, NS, Action::Delete).await.is_err());
+        act(&client, &Kind::Deployment.into(), Some(NS), "web", Action::Scale { replicas: 1 }).await.unwrap();
+        assert!(act(&client, &Kind::Pod.into(), Some(NS), "web", Action::Scale { replicas: 1 }).await.is_err());
+        assert!(act(&client, &Kind::Namespace.into(), None, NS, Action::Delete).await.is_err());
         let pod = web_pod(&client).await;
-        act(&client, Kind::Pod, Some(NS), &pod, Action::Delete).await.unwrap();
-        let err = act(&client, Kind::Pod, Some(NS), "nao-existe", Action::Delete).await.unwrap_err();
+        act(&client, &Kind::Pod.into(), Some(NS), &pod, Action::Delete).await.unwrap();
+        let err = act(&client, &Kind::Pod.into(), Some(NS), "nao-existe", Action::Delete).await.unwrap_err();
         assert!(err.starts_with("não encontrado"), "{err}");
     }
 }

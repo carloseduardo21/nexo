@@ -595,11 +595,11 @@ pub async fn k8s_list(
     kube: State<'_, Kube>,
     kubeconfig: Option<String>,
     context: String,
-    kind: k8s::Kind,
+    kind: k8s::Resource,
     namespace: Option<String>,
 ) -> Result<k8s::Table, String> {
     let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
-    k8s::list(&client, kind, namespace.as_deref()).await
+    k8s::list(&client, &kind, namespace.as_deref()).await
 }
 
 #[tauri::command]
@@ -608,13 +608,13 @@ pub async fn k8s_yaml(
     kube: State<'_, Kube>,
     kubeconfig: Option<String>,
     context: String,
-    kind: k8s::Kind,
+    kind: k8s::Resource,
     namespace: Option<String>,
     name: String,
     reveal: bool,
 ) -> Result<String, String> {
     let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
-    k8s::yaml(&client, kind, namespace.as_deref(), &name, reveal).await
+    k8s::yaml(&client, &kind, namespace.as_deref(), &name, reveal).await
 }
 
 #[tauri::command]
@@ -622,13 +622,13 @@ pub async fn k8s_action(
     kube: State<'_, Kube>,
     kubeconfig: Option<String>,
     context: String,
-    kind: k8s::Kind,
+    kind: k8s::Resource,
     namespace: Option<String>,
     name: String,
     action: k8s::Action,
 ) -> Result<(), String> {
     let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
-    k8s::act(&client, kind, namespace.as_deref(), &name, action).await
+    k8s::act(&client, &kind, namespace.as_deref(), &name, action).await
 }
 
 #[derive(serde::Serialize)]
@@ -715,4 +715,38 @@ pub fn k8s_forward_stop(kube: State<'_, Kube>, id: u32) {
 #[tauri::command]
 pub fn k8s_forwards(kube: State<'_, Kube>) -> Vec<k8s_forward::ForwardInfo> {
     kube.forwards.list()
+}
+
+/// Salva o YAML editado; devolve o YAML como ficou no cluster.
+#[tauri::command]
+pub async fn k8s_apply(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+    kind: k8s::Resource,
+    namespace: Option<String>,
+    name: String,
+    yaml: String,
+) -> Result<String, String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    k8s::apply(&client, &kind, namespace.as_deref(), &name, &yaml).await
+}
+
+/// Uso de CPU/memória do metrics-server: de nodes (`nodes`) ou de pods (`namespace` ausente = todos).
+#[tauri::command]
+pub async fn k8s_metrics(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+    nodes: bool,
+    namespace: Option<String>,
+) -> Result<std::collections::HashMap<String, k8s::Usage>, String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    k8s::metrics(&client, nodes, namespace.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn k8s_custom_resources(kube: State<'_, Kube>, kubeconfig: Option<String>, context: String) -> Result<Vec<k8s::CustomInfo>, String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    k8s::custom_resources(&client).await
 }
