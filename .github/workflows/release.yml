@@ -1,5 +1,11 @@
 # Publica uma release (rascunho) com os instaladores de Windows e Linux.
 # Disparo: `git tag v0.1.0 && git push origin v0.1.0`, ou manualmente na aba Actions.
+#
+# Assinatura do Windows (SignPath Foundation, grátis para open source): liga sozinha quando as
+# variáveis SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG e SIGNPATH_SIGNING_POLICY_SLUG e o
+# segredo SIGNPATH_API_TOKEN existem no repositório. Sem elas, os instaladores saem sem assinatura.
+# O executável é assinado antes de entrar nos instaladores, e os instaladores depois; cada pedido
+# espera a aprovação manual no SignPath. Configurações dos artefatos em .signpath/.
 name: Release
 
 on:
@@ -9,21 +15,39 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-          - os: ubuntu-22.04
-    runs-on: ${{ matrix.os }}
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Dependências do sistema (Linux)
-        if: runner.os == 'Linux'
+      - id: tag
+        run: |
+          version=$(jq -r .version src-tauri/tauri.conf.json)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=${{ github.ref_type == 'tag' && github.ref_name || 'v$version' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Release (rascunho)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --target "$GITHUB_SHA" \
+            --title "Nexo $TAG" \
+            --notes "Instaladores para Windows (.msi / -setup.exe) e Linux (.deb / .rpm / .AppImage)."
+
+  linux:
+    needs: release
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependências do sistema
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
@@ -42,11 +66,108 @@ jobs:
 
       - run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0
+      - run: npx tauri build
+
+      - name: Envia para a release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd src-tauri/target/release/bundle
+          gh release upload "${{ needs.release.outputs.tag }}" deb/*.deb rpm/*.rpm appimage/*.AppImage --clobber
+
+  windows:
+    needs: release
+    runs-on: windows-latest
+    env:
+      SIGN: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
-          releaseName: Nexo v__VERSION__
-          releaseBody: Instaladores para Windows (.msi / -setup.exe) e Linux (.deb / .rpm / .AppImage).
-          releaseDraft: true
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Compila (sem instaladores)
+        run: npx tauri build --no-bundle
+
+      # 1. O executável, que vai dentro dos dois instaladores.
+      - name: Executável para assinar
+        if: env.SIGN == 'true'
+        id: exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexo-exe
+          path: src-tauri/target/release/nexo.exe
+          if-no-files-found: error
+
+      - name: Assina o executável
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: executable
+          github-artifact-id: ${{ steps.exe.outputs.artifact-id }}
+          parameters: |
+            version: ${{ toJSON(needs.release.outputs.version) }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed/exe
+
+      - name: Usa o executável assinado
+        if: env.SIGN == 'true'
+        run: Copy-Item signed/exe/nexo.exe src-tauri/target/release/nexo.exe -Force
+
+      - name: Instaladores
+        run: npx tauri bundle --bundles msi,nsis
+
+      # 2. Os instaladores.
+      - name: Instaladores para assinar
+        if: env.SIGN == 'true'
+        id: installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexo-installers
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
+      - name: Assina os instaladores
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: installers
+          github-artifact-id: ${{ steps.installers.outputs.artifact-id }}
+          parameters: |
+            version: ${{ toJSON(needs.release.outputs.version) }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed/installers
+
+      - name: Envia para a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if [ "$SIGN" = true ]; then
+            files=(signed/installers/msi/*.msi signed/installers/nsis/*-setup.exe)
+          else
+            files=(src-tauri/target/release/bundle/msi/*.msi src-tauri/target/release/bundle/nsis/*-setup.exe)
+          fi
+          gh release upload "${{ needs.release.outputs.tag }}" "${files[@]}" --clobber

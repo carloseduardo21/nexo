@@ -1,6 +1,12 @@
 # Nexo
 
-Terminal rápido e multiplataforma para SSH, túneis, SFTP e RDP. Inspirado no Termius e no MobaXterm.
+Terminal rápido e multiplataforma para SSH, túneis, SFTP, RDP, Docker e Kubernetes. Inspirado no
+Termius, no MobaXterm e no Lens.
+
+Software livre sob a [GPL-3.0](LICENSE). Downloads na página de
+[releases](https://github.com/carloseduardo21/nexo/releases) — veja a
+[política de assinatura de código](#política-de-assinatura-de-código-code-signing-policy) e a
+[privacidade](#privacidade).
 
 ## Rodando em desenvolvimento
 
@@ -20,8 +26,10 @@ npm run tauri dev
   (`git tag v0.1.0 && git push origin v0.1.0`) e cria uma release em rascunho com os instaladores.
 
 A versão fica em `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` e `package.json`.
-Os instaladores não são assinados: o Windows SmartScreen avisa na primeira execução
-("Mais informações" → "Executar assim mesmo").
+No GitHub, o executável e os instaladores do Windows são assinados pela SignPath quando o projeto
+está configurado lá (variáveis `SIGNPATH_*` do repositório; ver o comentário no workflow e as
+configurações em `.signpath/`). Builds locais não são assinados: o Windows SmartScreen avisa na
+primeira execução ("Mais informações" → "Executar assim mesmo").
 
 Só a interface, no navegador (`npm run dev` e abrir http://localhost:1420): fora do Tauri, o
 `src/dev-mock.ts` simula o backend com dados de exemplo. `?view=credentials|tunnels|settings|session`,
@@ -187,3 +195,34 @@ O mock fica fora do build de produção.
   árvore de painéis e broadcast; `lib/term.ts` encapsula cada terminal; `lib/sftp.svelte.ts`
   guarda o navegador de arquivos de cada painel SSH e as transferências; `lib/rdp.ts` é o painel
   RDP (canvas, mapa de scancodes, cursor do servidor).
+
+## Política de assinatura de código (Code signing policy)
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by
+[SignPath Foundation](https://signpath.org/).
+
+Os binários do Windows publicados nas releases são compilados pelo GitHub Actions a partir deste
+repositório (`.github/workflows/release.yml`) e assinados pela SignPath. Nenhum binário compilado
+fora desse fluxo é assinado.
+
+- **Autores e revisores** (committers): [Carlos Silva](https://github.com/carloseduardo21)
+- **Aprovadores** (cada release assinada é aprovada manualmente):
+  [Carlos Silva](https://github.com/carloseduardo21)
+
+Contribuições de fora do time entram por pull request, revisadas antes do merge.
+
+## Privacidade
+
+O Nexo não coleta nem envia dados a ninguém: não tem telemetria, analytics nem verificação de
+atualização. Ele só se conecta aos servidores que você configura (SSH, RDP, clusters do
+kubeconfig). Hosts, credenciais e configurações ficam nesta máquina; senhas e chaves, no cofre
+criptografado (`vault.bin`), com a chave no cofre do sistema operacional.
+
+## Licença
+
+Copyright (C) 2026 Carlos Silva
+
+Este programa é software livre: você pode redistribuí-lo e/ou modificá-lo sob os termos da
+GNU General Public License, como publicada pela Free Software Foundation, na versão 3 da licença
+ou (a seu critério) qualquer versão posterior. Ele é distribuído na esperança de ser útil, mas
+SEM NENHUMA GARANTIA. Veja o arquivo [LICENSE](LICENSE).

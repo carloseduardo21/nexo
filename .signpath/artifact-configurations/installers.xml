@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Configuração "installers" no SignPath: o MSI e o instalador NSIS. O nexo.exe dentro deles
+     já foi assinado no pedido anterior (configuração "executable"). -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <msi-file path="msi/Nexo_*.msi" product-name="Nexo" product-version="${version}">
+      <authenticode-sign />
+    </msi-file>
+    <pe-file path="nsis/Nexo_*-setup.exe" product-name="Nexo" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

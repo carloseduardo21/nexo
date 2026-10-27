@@ -2,6 +2,8 @@
 name = "nexo"
 version = "0.2.0"
 description = "Nexo — terminal SSH/RDP rápido e multiplataforma"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/carloseduardo21/nexo"
 edition = "2021"
 
 [lib]
