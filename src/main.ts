@@ -5,7 +5,7 @@ import App from './App.svelte';
 import { app as state, connectHost, openDialog, showView, type View } from './lib/state.svelte';
 import { side, type SidePanel } from './lib/side.svelte';
 import { hostinfo } from './lib/hostinfo.svelte';
-import { openDetail } from './lib/k8s.svelte';
+import { forwards, openDetail } from './lib/k8s.svelte';
 
 // Fora do Tauri (navegador comum, só em dev): backend simulado para ver a interface.
 const mocked = import.meta.env.DEV && !('__TAURI_INTERNALS__' in window);
@@ -34,6 +34,9 @@ if (mocked) {
   // `?kube=<nome>`: abre um item na página Kubernetes (`?view=kubernetes`).
   const kube = params.get('kube');
   if (kube) setTimeout(() => openDetail('pod', 'loja', kube), 500);
+  // `?forward=<nome>`: diálogo de port-forward de um service.
+  const forward = params.get('forward');
+  if (forward) setTimeout(() => (forwards.dialog = { kind: 'service', namespace: 'loja', name: forward }), 500);
   // `?dialog=host|newhost|credential|tunnel|palette|generate` abre um diálogo (depois de carregar os dados).
   const dialog = params.get('dialog');
   if (dialog) {

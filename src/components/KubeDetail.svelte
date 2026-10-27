@@ -5,11 +5,16 @@
   import EyeOffIcon from '@lucide/svelte/icons/eye-off';
   import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
   import { Button } from '$lib/components/ui/button/index.js';
-  import { k8s, kindInfo, loadYaml, toggleReveal } from '../lib/k8s.svelte';
+  import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
+  import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
+  import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
+  import { actionsFor, k8s, kindInfo, loadYaml, openPodTerminal, toggleReveal } from '../lib/k8s.svelte';
   import { copyText } from '../lib/actions.svelte';
 
   const detail = $derived(k8s.detail!);
   const secret = $derived(detail.kind === 'secret');
+  const items = $derived(actionsFor(detail.kind, detail.namespace, detail.name, { containers: detail.containers }));
 
   /** Realce simples por linha: chave, `- ` de lista e valores (número, booleano, nulo). */
   type Part = { text: string; class?: string };
@@ -51,6 +56,14 @@
       <div class="truncate text-sm font-medium" title={detail.name}>{detail.name}</div>
       <div class="truncate text-[11px] text-muted-foreground">{kindInfo(detail.kind).label}{detail.namespace ? ` · ${detail.namespace}` : ''}</div>
     </div>
+    {#if detail.kind === 'pod'}
+      <Button variant="ghost" size="icon-sm" title="Logs" onclick={() => openPodTerminal(detail.namespace, detail.name, { type: 'logs', previous: false })}>
+        <ScrollTextIcon />
+      </Button>
+      <Button variant="ghost" size="icon-sm" title="Shell" onclick={() => openPodTerminal(detail.namespace, detail.name, { type: 'shell' })}>
+        <SquareTerminalIcon />
+      </Button>
+    {/if}
     {#if secret}
       <Button variant="ghost" size="icon-sm" title={detail.reveal ? 'Esconder valores' : 'Revelar valores'} onclick={toggleReveal}>
         {#if detail.reveal}<EyeOffIcon />{:else}<EyeIcon />{/if}
@@ -58,6 +71,22 @@
     {/if}
     <Button variant="ghost" size="icon-sm" title="Copiar YAML" disabled={!detail.yaml} onclick={() => detail.yaml && copyText(detail.yaml)}><CopyIcon /></Button>
     <Button variant="ghost" size="icon-sm" title="Recarregar" onclick={() => void loadYaml()}><RefreshIcon /></Button>
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger>
+        {#snippet child({ props })}
+          <Button {...props} variant="ghost" size="icon-sm" title="Ações"><EllipsisIcon /></Button>
+        {/snippet}
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content align="end">
+        {#each items as item, i (i)}
+          {#if item}
+            <DropdownMenu.Item variant={item.destructive ? 'destructive' : 'default'} onSelect={item.run}>{item.label}</DropdownMenu.Item>
+          {:else}
+            <DropdownMenu.Separator />
+          {/if}
+        {/each}
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
     <Button variant="ghost" size="icon-sm" title="Fechar (Esc)" onclick={() => (k8s.detail = null)}><XIcon /></Button>
   </header>
 

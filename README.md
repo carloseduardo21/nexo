@@ -116,8 +116,15 @@ O mock fica fora do build de produção.
   estados com cor, filtro e ordenação. A lista visível atualiza a cada 5 s.
 - Clicar num item mostra o YAML (sem `managedFields`). Em Secrets os valores ficam escondidos
   até clicar em revelar.
-- Por enquanto só leitura. Próximas etapas: logs, shell e port-forward de pods, escalar e
-  reiniciar workloads, editar o YAML.
+- Menu de cada item (botão `…` ou clique direito): **logs** (acompanhando ao vivo, ou do container
+  anterior depois de um restart) e **shell** de pods numa aba de terminal, **port-forward**,
+  **escalar** e **reiniciar** workloads (como o `kubectl rollout restart`) e **excluir** (com
+  confirmação; namespaces, nodes e volumes ficam de fora). Pods com vários containers mostram cada
+  um no menu do painel de YAML.
+- **Port-forward** para pods, services e deployments/statefulsets: escolhe a porta (as declaradas
+  aparecem como sugestão) e a local; fica em `127.0.0.1` enquanto o Nexo estiver aberto, listado na
+  barra da página (clique abre no navegador). Se o pod for trocado (rollout), o próximo acesso
+  escolhe outro pelo seletor.
 
 ## Túneis
 

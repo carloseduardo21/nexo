@@ -1,6 +1,8 @@
 // Página Kubernetes: contexto, namespace e tipo escolhidos, a lista visível e o YAML aberto.
-import { backend, type KubeContexts, type KubeKind, type KubeTable } from './backend';
-import { errorText } from './actions.svelte';
+import { toast } from 'svelte-sonner';
+import { backend, type KubeAction, type KubeContexts, type KubeForward, type KubeKind, type KubeTable, type KubeTermMode } from './backend';
+import { newTab, openDialog } from './state.svelte';
+import { copyText, errorText } from './actions.svelte';
 import { settings } from './settings.svelte';
 
 export const LIST_INTERVAL = 5000;
@@ -44,6 +46,8 @@ export interface Detail {
   kind: KubeKind;
   namespace: string;
   name: string;
+  /** Pods: containers (para logs/shell de cada um). */
+  containers: string[];
   yaml: string | null;
   error: string;
   /** Secrets: mostrar os valores. */
@@ -174,8 +178,17 @@ export async function loadList() {
 }
 
 export function openDetail(kind: KubeKind, namespace: string, name: string) {
-  k8s.detail = { kind, namespace, name, yaml: null, error: '', reveal: false };
+  k8s.detail = { kind, namespace, name, containers: [], yaml: null, error: '', reveal: false };
   void loadYaml();
+  if (kind === 'pod') {
+    const d = k8s.detail;
+    backend
+      .k8sContainers(settings.kubeconfig, k8s.context, namespace, name)
+      .then((r) => {
+        if (k8s.detail === d) d.containers = r.containers.filter((c) => !c.init).map((c) => c.name);
+      })
+      .catch(() => {});
+  }
 }
 
 export async function loadYaml() {
@@ -203,4 +216,121 @@ export function parseAge(text: string): number | null {
   const parts = [...text.matchAll(/(\d+)([smhdy])/g)];
   if (!parts.length || parts.map((p) => p[0]).join('') !== text.trim()) return null;
   return parts.reduce((sum, [, n, u]) => sum + Number(n) * units[u], 0);
+}
+
+// ---------- Ações ----------
+
+export const canScale = (k: KubeKind) => k === 'deployment' || k === 'statefulSet' || k === 'replicaSet';
+export const canRestart = (k: KubeKind) => k === 'deployment' || k === 'statefulSet' || k === 'daemonSet';
+export const canDelete = (k: KubeKind) => !['namespace', 'node', 'persistentVolume', 'storageClass'].includes(k);
+export const canForward = (k: KubeKind) => ['pod', 'service', 'deployment', 'statefulSet', 'daemonSet', 'replicaSet'].includes(k);
+
+/** Logs ou shell de um pod numa aba nova. */
+export function openPodTerminal(namespace: string, pod: string, mode: KubeTermMode, container = '') {
+  const what = mode.type === 'shell' ? 'shell' : mode.previous ? 'logs anteriores' : 'logs';
+  newTab({
+    kind: 'kube',
+    kube: {
+      kubeconfig: settings.kubeconfig,
+      context: k8s.context,
+      namespace,
+      pod,
+      container,
+      mode,
+      title: `${what}: ${container ? `${pod}/${container}` : pod}`,
+    },
+  });
+}
+
+/** Escalar, reiniciar ou excluir, com confirmação. `replicas`: atual (sugestão no escalar). */
+export async function runAction(kind: KubeKind, namespace: string, name: string, type: KubeAction['type'], replicas?: number) {
+  const label = kindInfo(kind).label;
+  let action: KubeAction;
+  if (type === 'scale') {
+    const value = await openDialog<string | null>({
+      type: 'prompt',
+      title: `Escalar ${name}`,
+      label: 'Réplicas',
+      value: String(replicas ?? 1),
+      confirm: 'Escalar',
+    });
+    if (value === null) return;
+    const n = Number(value.trim());
+    if (!Number.isInteger(n) || n < 0 || n > 1000) return void toast.error('Número de réplicas inválido');
+    action = { type: 'scale', replicas: n };
+  } else {
+    const ok = await openDialog<boolean>(
+      type === 'restart'
+        ? { type: 'confirm', title: `Reiniciar ${name}?`, message: 'Os pods são recriados aos poucos, como no kubectl rollout restart.', confirm: 'Reiniciar' }
+        : {
+            type: 'confirm',
+            title: `Excluir ${name}?`,
+            message: `${label}${namespace ? ` em ${namespace}` : ''} no contexto ${k8s.context}.${kind === 'pod' ? ' Se o pod for de um workload, outro é criado no lugar.' : ' Não dá para desfazer.'}`,
+            confirm: 'Excluir',
+            danger: true,
+          },
+    );
+    if (!ok) return;
+    action = { type };
+  }
+  try {
+    await backend.k8sAction(settings.kubeconfig, k8s.context, kind, namespace, name, action);
+    toast.success(action.type === 'scale' ? `${name}: ${action.replicas} réplicas` : action.type === 'restart' ? `${name} reiniciando` : `${name} excluído`);
+    if (action.type === 'delete' && k8s.detail?.name === name && k8s.detail.kind === kind) k8s.detail = null;
+    void loadList();
+  } catch (err) {
+    toast.error(errorText(err));
+  }
+}
+
+// ---------- Port-forwards ----------
+
+export const forwards = $state({ list: [] as KubeForward[], dialog: null as null | { kind: KubeKind; namespace: string; name: string } });
+
+export async function loadForwards() {
+  forwards.list = await backend.k8sForwards().catch(() => forwards.list);
+}
+
+export async function startForward(kind: KubeKind, namespace: string, name: string, port: number, localPort: number) {
+  try {
+    const f = await backend.k8sForwardStart(settings.kubeconfig, k8s.context, kind, namespace, name, port, localPort);
+    toast.success(`localhost:${f.localPort} → ${name}:${port}`);
+    await loadForwards();
+    return true;
+  } catch (err) {
+    toast.error(errorText(err));
+    return false;
+  }
+}
+
+export async function stopForward(id: number) {
+  await backend.k8sForwardStop(id).catch(() => {});
+  await loadForwards();
+}
+
+export type MenuItem = { label: string; run: () => void; destructive?: boolean } | null;
+
+/** Ações de um item (menu da linha e do painel de YAML). `desired`: réplicas atuais. */
+export function actionsFor(kind: KubeKind, namespace: string, name: string, opts: { desired?: number; containers?: string[] } = {}): MenuItem[] {
+  const items: (MenuItem | false)[] = [];
+  if (kind === 'pod') {
+    const containers = opts.containers && opts.containers.length > 1 ? opts.containers : [''];
+    for (const c of containers) {
+      const suffix = c ? ` (${c})` : '';
+      items.push(
+        { label: `Logs${suffix}`, run: () => openPodTerminal(namespace, name, { type: 'logs', previous: false }, c) },
+        { label: `Logs anteriores${suffix}`, run: () => openPodTerminal(namespace, name, { type: 'logs', previous: true }, c) },
+        { label: `Shell${suffix}`, run: () => openPodTerminal(namespace, name, { type: 'shell' }, c) },
+      );
+    }
+    items.push(null);
+  }
+  if (canForward(kind)) items.push({ label: 'Port-forward…', run: () => (forwards.dialog = { kind, namespace, name }) });
+  if (canScale(kind)) items.push({ label: 'Escalar…', run: () => void runAction(kind, namespace, name, 'scale', opts.desired) });
+  if (canRestart(kind)) items.push({ label: 'Reiniciar', run: () => void runAction(kind, namespace, name, 'restart') });
+  items.push(null, { label: 'Copiar nome', run: () => void copyText(name) });
+  if (canDelete(kind)) items.push({ label: 'Excluir', run: () => void runAction(kind, namespace, name, 'delete'), destructive: true });
+  return items
+    .filter((a): a is MenuItem => a !== false)
+    .filter((a, i, all) => a !== null || (i > 0 && all[i - 1] !== null && all.slice(i + 1).some((b) => b !== null)));
 }

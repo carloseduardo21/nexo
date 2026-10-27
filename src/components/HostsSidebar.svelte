@@ -17,7 +17,7 @@
 
   const groups = $derived(groupHosts(app.hosts.filter((h) => matchHost(h, query))));
   // Hosts com sessão aberta ficam marcados.
-  const open = $derived(new Set(Object.values(app.meta).flatMap((m) => (m.spec.kind !== 'local' && !m.exited ? [m.spec.host.id] : []))));
+  const open = $derived(new Set(Object.values(app.meta).flatMap((m) => ((m.spec.kind === 'ssh' || m.spec.kind === 'rdp') && !m.exited ? [m.spec.host.id] : []))));
 </script>
 
 <aside class="flex w-60 shrink-0 flex-col border-r bg-sidebar">

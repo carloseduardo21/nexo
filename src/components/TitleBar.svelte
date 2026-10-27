@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ShipWheelIcon from '@lucide/svelte/icons/ship-wheel';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import XIcon from '@lucide/svelte/icons/x';
   import PlusIcon from '@lucide/svelte/icons/plus';
@@ -57,6 +58,8 @@
           <MonitorIcon class="size-3.5 shrink-0" />
         {:else if meta?.kind === 'ssh'}
           <TerminalIcon class="size-3.5 shrink-0" />
+        {:else if meta?.kind === 'kube'}
+          <ShipWheelIcon class="size-3.5 shrink-0" />
         {:else}
           <SquareTerminalIcon class="size-3.5 shrink-0" />
         {/if}

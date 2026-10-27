@@ -200,6 +200,18 @@ export function installDevMock() {
         return kubeList(a?.kind, a?.namespace);
       case 'k8s_yaml':
         return kubeYaml;
+      case 'k8s_containers':
+        return { containers: [{ name: 'api', init: false }, { name: 'istio-proxy', init: false }], default: 'api' };
+      case 'k8s_ports':
+        return [
+          { port: 8080, name: 'http', protocol: 'TCP' },
+          { port: 9090, name: 'metrics', protocol: 'TCP' },
+        ];
+      case 'k8s_forwards':
+        return [
+          { id: 1, context: 'prod-sa-east-1', namespace: 'loja', kind: 'service', name: 'loja-api', port: 8080, localPort: 8080, connections: 2, error: '' },
+          { id: 2, context: 'kind-treino', namespace: 'monitoring', kind: 'pod', name: 'grafana-6f6d9c7b8-5vtnm', port: 3000, localPort: 3001, connections: 0, error: 'nada escutando na porta 3000 do pod' },
+        ];
       case 'host_save': {
         const index = hosts.findIndex((h) => h.id === a?.host.id);
         if (index >= 0) hosts[index] = { ...hosts[index], ...a?.host };

@@ -2,11 +2,33 @@ import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
-import { asFailure, backend, type ConnectError, type ConnectFailure, type Exec, type HostView, type RouteOptions, type ShellProfile } from './backend';
+import {
+  asFailure,
+  backend,
+  type ConnectError,
+  type ConnectFailure,
+  type Exec,
+  type HostView,
+  type KubeTermMode,
+  type RouteOptions,
+  type ShellProfile,
+} from './backend';
 import { DEFAULT_FONT, onAppearanceChange, settings, theme } from './settings.svelte';
 
 /** O que um painel mostra: terminal (local ou SSH) ou área de trabalho RDP (`rdp.ts`). */
-export type TermSpec = { kind: 'local'; profile: ShellProfile } | { kind: 'ssh'; host: HostView; exec?: ExecSpec };
+export type TermSpec = { kind: 'local'; profile: ShellProfile } | { kind: 'ssh'; host: HostView; exec?: ExecSpec } | { kind: 'kube'; kube: KubeTermSpec };
+
+/** Logs ou shell de um pod do Kubernetes (pela API do cluster, sem SSH). */
+export interface KubeTermSpec {
+  kubeconfig: string;
+  context: string;
+  namespace: string;
+  pod: string;
+  /** '' = o padrão do pod. */
+  container: string;
+  mode: KubeTermMode;
+  title: string;
+}
 
 /** Terminal que roda um comando (logs/shell de um container) na conexão de outro painel. */
 export interface ExecSpec {
@@ -175,6 +197,7 @@ export class TermPane {
     this.started = true;
     this.exited = false;
     if (this.spec.kind === 'ssh') return this.connectSsh(this.spec.host, this.spec.exec);
+    if (this.spec.kind === 'kube') return this.connectKube(this.spec.kube);
     try {
       this.sessionId = await backend.spawnPty(this.spec.profile.id, this.term.cols, this.term.rows, this.onData, this.onExit);
       this.cb.onSession(this.sessionId);
@@ -189,6 +212,16 @@ export class TermPane {
     this.started = false;
     this.term.write('\r\n');
     void this.start();
+  }
+
+  private async connectKube(k: KubeTermSpec) {
+    try {
+      this.sessionId = await backend.k8sTerminal(k.kubeconfig, k.context, k.namespace, k.pod, k.container, k.mode, this.term.cols, this.term.rows, this.onData, this.onExit);
+      this.cb.onSession(this.sessionId);
+    } catch (err) {
+      this.term.write(`\x1b[31m${err}\x1b[0m\r\n`);
+      this.handleExit(null);
+    }
   }
 
   private async connectSsh(host: HostView, exec?: ExecSpec) {
@@ -370,8 +403,9 @@ export class TermPane {
     this.sessionId = null;
     this.cb.onSession(null);
     const detail = code === null ? '' : ` com código ${code}`;
-    const hint = this.spec.kind === 'ssh' ? 'Enter reconecta, Ctrl+Shift+W fecha' : 'Enter fecha o painel';
-    const what = this.spec.kind === 'ssh' ? 'conexão encerrada' : 'processo encerrado';
+    const remote = this.spec.kind === 'ssh' || this.spec.kind === 'kube';
+    const hint = remote ? 'Enter reconecta, Ctrl+Shift+W fecha' : 'Enter fecha o painel';
+    const what = this.spec.kind === 'kube' && this.spec.kube.mode.type === 'logs' ? 'logs encerrados' : remote ? 'conexão encerrada' : 'processo encerrado';
     this.unacked = 0;
     this.term.write(`\r\n\x1b[2m[${what}${detail} — ${hint}]\x1b[0m\r\n`);
     this.cb.onExit(code);

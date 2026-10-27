@@ -14,8 +14,16 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
   import Picker from './Picker.svelte';
   import KubeDetail from './KubeDetail.svelte';
+  import KubeForwardDialog from './KubeForwardDialog.svelte';
+  import XIcon from '@lucide/svelte/icons/x';
+  import { openUrl } from '@tauri-apps/plugin-opener';
+  import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
   import {
     KIND_GROUPS,
+    actionsFor,
+    forwards,
+    loadForwards,
+    stopForward,
     LIST_INTERVAL,
     k8s,
     kindInfo,
@@ -103,6 +111,24 @@
     void settings.kubeconfig;
     void loadContexts();
   });
+
+  // Port-forwards rodam no backend (continuam com a página fechada); aqui só o estado.
+  $effect(() => {
+    void loadForwards();
+    const timer = setInterval(() => !document.hidden && void loadForwards(), 3000);
+    return () => clearInterval(timer);
+  });
+
+  /** Réplicas atuais (coluna Desired, ou o total de "Ready": 2/3 → 3). */
+  function desired(row: Row) {
+    if (!table) return undefined;
+    const at = (name: string) => table.columns.findIndex((c) => c.name === name);
+    const d = at('Desired');
+    if (d >= 0) return Number(row.cells[d]);
+    const r = at('Ready');
+    const m = r >= 0 ? /^\d+\/(\d+)$/.exec(String(row.cells[r])) : null;
+    return m ? Number(m[1]) : undefined;
+  }
 
   // A lista visível é consultada de tempos em tempos.
   $effect(() => {
@@ -213,6 +239,26 @@
         {/each}
       </nav>
 
+      {#if forwards.list.length}
+        <div class="border-t px-2 py-1.5">
+          <div class="mb-0.5 px-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Port-forwards</div>
+          {#each forwards.list as f (f.id)}
+            <div class="group flex items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-sidebar-accent">
+              <span
+                class={cn('size-1.5 shrink-0 rounded-full', f.error ? 'bg-destructive' : f.connections ? 'bg-emerald-500' : 'bg-primary')}
+                title={f.error || (f.connections ? `${f.connections} conexões abertas` : 'Aguardando conexões')}></span>
+              <button class="min-w-0 flex-1 text-left" title={`Abrir http://localhost:${f.localPort}`} onclick={() => void openUrl(`http://localhost:${f.localPort}`)}>
+                <span class="block truncate text-[13px] hover:underline">localhost:{f.localPort}</span>
+                <span class="block truncate text-[11px] text-muted-foreground">
+                  {f.name}:{f.port}{f.context !== k8s.context ? ` · ${f.context}` : ''}
+                </span>
+              </button>
+              <Button variant="ghost" size="icon-xs" class="opacity-0 group-hover:opacity-100" title="Fechar" onclick={() => void stopForward(f.id)}><XIcon /></Button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
       <div class="flex items-center gap-1 border-t px-2 py-1.5 text-[11px] text-muted-foreground">
         <span class="min-w-0 flex-1 truncate" title={k8s.config.source}>{k8s.config.source}</span>
         {@render sourceMenu()}
@@ -273,27 +319,71 @@
                     </button>
                   </th>
                 {/each}
+                <th class="w-10 border-b"></th>
               </tr>
             </thead>
             <tbody>
               {#each rows as row (row.uid || `${row.namespace}/${row.name}`)}
                 {@const selected = k8s.detail?.kind === k8s.kind && k8s.detail.name === row.name && k8s.detail.namespace === row.namespace}
-                <tr
-                  class={cn('cursor-pointer hover:bg-accent/60', selected && 'bg-accent')}
-                  onclick={() => openDetail(k8s.kind, row.namespace, row.name)}>
-                  {#each columns as col, i (col.index)}
-                    {@const value = cell(row, col.index)}
-                    <td
-                      class={cn(
-                        'max-w-[28rem] truncate border-b border-border/50 px-3 py-1.5 tabular-nums first:pl-4',
-                        i === 0 && 'font-medium',
-                        tone(col.name, value, row),
-                      )}
-                      title={value}>
-                      {value}
-                    </td>
-                  {/each}
-                </tr>
+                {@const items = actionsFor(k8s.kind, row.namespace, row.name, { desired: desired(row) })}
+                <ContextMenu.Root>
+                  <ContextMenu.Trigger>
+                    {#snippet child({ props })}
+                      <tr
+                        {...props}
+                        class={cn('group cursor-pointer hover:bg-accent/60', selected && 'bg-accent')}
+                        onclick={() => openDetail(k8s.kind, row.namespace, row.name)}>
+                        {#each columns as col, i (col.index)}
+                          {@const value = cell(row, col.index)}
+                          <td
+                            class={cn(
+                              'max-w-[28rem] truncate border-b border-border/50 px-3 py-1.5 tabular-nums first:pl-4',
+                              i === 0 && 'font-medium',
+                              tone(col.name, value, row),
+                            )}
+                            title={value}>
+                            {value}
+                          </td>
+                        {/each}
+                        <td class="border-b border-border/50 pr-2 text-right">
+                          <DropdownMenu.Root>
+                            <DropdownMenu.Trigger>
+                              {#snippet child({ props })}
+                                <Button
+                                  {...props}
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  title="Ações"
+                                  class="opacity-0 group-hover:opacity-100 aria-expanded:opacity-100"
+                                  onclick={(e: MouseEvent) => e.stopPropagation()}>
+                                  <EllipsisIcon />
+                                </Button>
+                              {/snippet}
+                            </DropdownMenu.Trigger>
+                            <DropdownMenu.Content align="end">
+                              {#each items as item, i (i)}
+                                {#if item}
+                                  <DropdownMenu.Item variant={item.destructive ? 'destructive' : 'default'} onSelect={item.run}>{item.label}</DropdownMenu.Item>
+                                {:else}
+                                  <DropdownMenu.Separator />
+                                {/if}
+                              {/each}
+                            </DropdownMenu.Content>
+                          </DropdownMenu.Root>
+                        </td>
+                      </tr>
+                    {/snippet}
+                  </ContextMenu.Trigger>
+                  <ContextMenu.Content>
+                    {#each items as item, i (i)}
+                      {#if item}
+                        <ContextMenu.Item variant={item.destructive ? 'destructive' : 'default'} onSelect={item.run}>{item.label}</ContextMenu.Item>
+                      {:else}
+                        <ContextMenu.Separator />
+                      {/if}
+                    {/each}
+                  </ContextMenu.Content>
+                </ContextMenu.Root>
               {/each}
             </tbody>
           </table>
@@ -305,4 +395,7 @@
       <KubeDetail />
     {/if}
   </div>
+{/if}
+{#if forwards.dialog}
+  <KubeForwardDialog />
 {/if}

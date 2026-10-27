@@ -46,6 +46,10 @@ button:disabled {
   background: var(--primary);
 }
 
+.kind-kube {
+  background: #326ce5;
+}
+
 /* ---------- Área de trabalho e painéis ---------- */
 
 .workspace {

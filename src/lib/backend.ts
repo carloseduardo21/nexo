@@ -176,6 +176,29 @@ export interface KubeTable {
   truncated: boolean;
 }
 
+export type KubeAction = { type: 'delete' } | { type: 'scale'; replicas: number } | { type: 'restart' };
+export type KubeTermMode = { type: 'logs'; previous: boolean } | { type: 'shell' };
+
+export interface KubePort {
+  port: number;
+  name: string;
+  protocol: string;
+}
+
+export interface KubeForward {
+  id: number;
+  context: string;
+  namespace: string;
+  kind: KubeKind;
+  name: string;
+  /** Porta no pod/service. */
+  port: number;
+  localPort: number;
+  connections: number;
+  /** Último erro de uma conexão ('' = nenhum). */
+  error: string;
+}
+
 export interface HostMetrics {
   hostname: string;
   kernel: string;
@@ -360,6 +383,30 @@ export const backend = {
   k8sYaml: (kubeconfig: string, context: string, kind: KubeKind, namespace: string, name: string, reveal: boolean) =>
     invoke<string>('k8s_yaml', { kubeconfig, context, kind, namespace: namespace || null, name, reveal }),
 
+  k8sAction: (kubeconfig: string, context: string, kind: KubeKind, namespace: string, name: string, action: KubeAction) =>
+    invoke<void>('k8s_action', { kubeconfig, context, kind, namespace: namespace || null, name, action }),
+  k8sContainers: (kubeconfig: string, context: string, namespace: string, pod: string) =>
+    invoke<{ containers: { name: string; init: boolean }[]; default: string }>('k8s_containers', { kubeconfig, context, namespace, pod }),
+  k8sPorts: (kubeconfig: string, context: string, kind: KubeKind, namespace: string, name: string) =>
+    invoke<KubePort[]>('k8s_ports', { kubeconfig, context, kind, namespace, name }),
+  /** Logs ou shell de um pod como sessão de terminal. `container` '' = o padrão do pod. */
+  k8sTerminal: (
+    kubeconfig: string,
+    context: string,
+    namespace: string,
+    pod: string,
+    container: string,
+    mode: KubeTermMode,
+    cols: number,
+    rows: number,
+    onData: DataHandler,
+    onExit: ExitHandler,
+  ) => invoke<number>('k8s_terminal', { kubeconfig, context, namespace, pod, container, mode, cols, rows, ...channels(onData, onExit) }),
+  /** `localPort` 0 = a mesma do pod, se livre. */
+  k8sForwardStart: (kubeconfig: string, context: string, kind: KubeKind, namespace: string, name: string, port: number, localPort: number) =>
+    invoke<KubeForward>('k8s_forward_start', { kubeconfig, context, kind, namespace, name, port, localPort }),
+  k8sForwardStop: (id: number) => invoke<void>('k8s_forward_stop', { id }),
+  k8sForwards: () => invoke<KubeForward[]>('k8s_forwards'),
   sftpHome: (id: number) => invoke<string>('sftp_home', { id }),
   sftpList: (id: number, path: string) => invoke<RemoteEntry[]>('sftp_list', { id, path }),
   sftpMkdir: (id: number, path: string) => invoke<void>('sftp_mkdir', { id, path }),
