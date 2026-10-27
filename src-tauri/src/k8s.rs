@@ -20,6 +20,7 @@ const LIST_LIMIT: u32 = 2000;
 #[derive(Default)]
 pub struct Kube {
     clients: Mutex<HashMap<String, Client>>,
+    pub forwards: crate::k8s_forward::Forwards,
 }
 
 impl Kube {
@@ -120,7 +121,7 @@ pub fn contexts(source: Option<&str>) -> Result<Contexts, String> {
 
 /// Tipos que a interface sabe listar. Cada um vira um caminho fixo da API: o frontend
 /// nunca manda URL.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum Kind {
     Pod,
@@ -194,8 +195,13 @@ impl Kind {
     }
 }
 
+/// Caminho de um objeto.
+pub(crate) fn object_path(kind: Kind, namespace: Option<&str>, name: &str) -> Result<String, String> {
+    Ok(format!("{}/{}", kind.path(namespace)?, checked(name)?))
+}
+
 /// Nomes e namespaces viram parte da URL: só os caracteres que o Kubernetes aceita neles.
-fn checked(name: &str) -> Result<&str, String> {
+pub(crate) fn checked(name: &str) -> Result<&str, String> {
     let ok = !name.is_empty()
         && name.len() <= 253
         && name != "."
@@ -360,8 +366,211 @@ fn to_yaml(object: &mut Value, hide: bool) -> Result<String, String> {
     serde_saphyr::to_string(object).map_err(|e| e.to_string())
 }
 
+pub(crate) async fn get_json(client: &Client, path: String) -> Result<Value, String> {
+    client.request(get(path, "application/json")?).await.map_err(describe)
+}
+
+async fn send(client: &Client, request: http::Request<Vec<u8>>) -> Result<(), String> {
+    client.request::<Value>(request).await.map(drop).map_err(describe)
+}
+
+fn merge_patch(path: String, body: &Value) -> Result<http::Request<Vec<u8>>, String> {
+    http::Request::patch(path)
+        .header(http::header::CONTENT_TYPE, "application/merge-patch+json")
+        .header(http::header::ACCEPT, "application/json")
+        .body(body.to_string().into_bytes())
+        .map_err(|e| e.to_string())
+}
+
+/// Ações sobre um objeto. Excluir não vale para o que derruba o cluster inteiro de uma vez
+/// (namespaces, nodes, volumes, storage classes): isso fica com o `kubectl`.
+#[derive(Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum Action {
+    Delete,
+    Scale { replicas: u32 },
+    /// Como o `kubectl rollout restart`: muda uma anotação do template e os pods são recriados.
+    Restart,
+}
+
+pub async fn act(client: &Client, kind: Kind, namespace: Option<&str>, name: &str, action: Action) -> Result<(), String> {
+    let path = object_path(kind, namespace, name)?;
+    match action {
+        Action::Delete => {
+            if matches!(kind, Kind::Namespace | Kind::Node | Kind::PersistentVolume | Kind::StorageClass) {
+                return Err("excluir este tipo só pelo kubectl".into());
+            }
+            let request = http::Request::delete(path)
+                .header(http::header::ACCEPT, "application/json")
+                .body(Vec::new())
+                .map_err(|e| e.to_string())?;
+            send(client, request).await
+        }
+        Action::Scale { replicas } => {
+            if !matches!(kind, Kind::Deployment | Kind::StatefulSet | Kind::ReplicaSet) {
+                return Err("este tipo não escala".into());
+            }
+            send(client, merge_patch(format!("{path}/scale"), &serde_json::json!({ "spec": { "replicas": replicas } }))?).await
+        }
+        Action::Restart => {
+            if !matches!(kind, Kind::Deployment | Kind::StatefulSet | Kind::DaemonSet) {
+                return Err("este tipo não reinicia".into());
+            }
+            let now = k8s_openapi::jiff::Timestamp::now().to_string();
+            let body = serde_json::json!({ "spec": { "template": { "metadata": { "annotations": {
+                "kubectl.kubernetes.io/restartedAt": now } } } } });
+            send(client, merge_patch(path, &body)?).await
+        }
+    }
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContainerInfo {
+    pub name: String,
+    pub init: bool,
+}
+
+/// Containers de um pod (os de init por último) e o padrão (anotação
+/// `kubectl.kubernetes.io/default-container` ou o primeiro).
+pub async fn containers(client: &Client, namespace: &str, pod: &str) -> Result<(Vec<ContainerInfo>, String), String> {
+    let object = get_json(client, object_path(Kind::Pod, Some(namespace), pod)?).await?;
+    Ok(pod_containers(&object))
+}
+
+fn pod_containers(pod: &Value) -> (Vec<ContainerInfo>, String) {
+    let names = |field: &str| -> Vec<String> {
+        pod["spec"][field].as_array().into_iter().flatten().filter_map(|c| c["name"].as_str().map(str::to_owned)).collect()
+    };
+    let mut list: Vec<ContainerInfo> = names("containers").into_iter().map(|name| ContainerInfo { name, init: false }).collect();
+    list.extend(names("initContainers").into_iter().map(|name| ContainerInfo { name, init: true }));
+    let annotated = pod["metadata"]["annotations"]["kubectl.kubernetes.io/default-container"].as_str();
+    let default = annotated
+        .filter(|a| list.iter().any(|c| c.name == *a))
+        .map(str::to_owned)
+        .or_else(|| list.first().map(|c| c.name.clone()))
+        .unwrap_or_default();
+    (list, default)
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Port {
+    pub port: u16,
+    pub name: String,
+    pub protocol: String,
+}
+
+/// Tipos em que dá para abrir um port-forward.
+pub fn forwardable(kind: Kind) -> bool {
+    matches!(kind, Kind::Pod | Kind::Service | Kind::Deployment | Kind::StatefulSet | Kind::DaemonSet | Kind::ReplicaSet)
+}
+
+/// Portas conhecidas do objeto: as dos containers ou, num Service, as do Service.
+pub async fn ports(client: &Client, kind: Kind, namespace: &str, name: &str) -> Result<Vec<Port>, String> {
+    if !forwardable(kind) {
+        return Err("port-forward só em pods, services e workloads".into());
+    }
+    let object = get_json(client, object_path(kind, Some(namespace), name)?).await?;
+    Ok(object_ports(kind, &object))
+}
+
+fn object_ports(kind: Kind, object: &Value) -> Vec<Port> {
+    let port = |p: &Value, field: &str| {
+        Some(Port {
+            port: u16::try_from(p[field].as_u64()?).ok()?,
+            name: p["name"].as_str().unwrap_or_default().to_owned(),
+            protocol: p["protocol"].as_str().unwrap_or("TCP").to_owned(),
+        })
+    };
+    let mut list: Vec<Port> = if kind == Kind::Service {
+        object["spec"]["ports"].as_array().into_iter().flatten().filter_map(|p| port(p, "port")).collect()
+    } else {
+        let spec = if kind == Kind::Pod { &object["spec"] } else { &object["spec"]["template"]["spec"] };
+        spec["containers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|c| c["ports"].as_array().into_iter().flatten())
+            .filter_map(|p| port(p, "containerPort"))
+            .collect()
+    };
+    list.dedup_by_key(|p| p.port);
+    list
+}
+
+/// Para onde vai um port-forward: o pod e a porta nele. Services e workloads escolhem um pod
+/// pronto pelo seletor (como o `kubectl port-forward svc/x`).
+pub async fn resolve(client: &Client, kind: Kind, namespace: &str, name: &str, port: u16) -> Result<(String, u16), String> {
+    if kind == Kind::Pod {
+        return Ok((checked(name)?.to_owned(), port));
+    }
+    if !forwardable(kind) {
+        return Err("port-forward só em pods, services e workloads".into());
+    }
+    let object = get_json(client, object_path(kind, Some(namespace), name)?).await?;
+    let (selector, target) = if kind == Kind::Service {
+        let entry = object["spec"]["ports"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|p| p["port"].as_u64() == Some(port.into()))
+            .ok_or_else(|| format!("o service {name} não tem a porta {port}"))?;
+        (&object["spec"]["selector"], entry["targetPort"].clone())
+    } else {
+        (&object["spec"]["selector"]["matchLabels"], Value::from(port))
+    };
+    let selector = label_selector(selector).ok_or_else(|| format!("{name} não tem seletor de pods"))?;
+    let pods = get_json(
+        client,
+        format!("/api/v1/namespaces/{}/pods?labelSelector={}", checked(namespace)?, encode(&selector)),
+    )
+    .await?;
+    let pod = pods["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|p| p["metadata"]["deletionTimestamp"].is_null() && p["status"]["phase"] == "Running")
+        // Os prontos primeiro.
+        .max_by_key(|p| {
+            p["status"]["conditions"].as_array().into_iter().flatten().any(|c| c["type"] == "Ready" && c["status"] == "True")
+        })
+        .ok_or_else(|| format!("nenhum pod rodando para {name}"))?;
+    let pod_name = pod["metadata"]["name"].as_str().unwrap_or_default().to_owned();
+    let pod_port = match target {
+        Value::Number(n) => n.as_u64().and_then(|n| u16::try_from(n).ok()).unwrap_or(port),
+        // Porta nomeada: procura nos containers do pod.
+        Value::String(named) => pod["spec"]["containers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|c| c["ports"].as_array().into_iter().flatten())
+            .find(|p| p["name"] == named.as_str())
+            .and_then(|p| u16::try_from(p["containerPort"].as_u64()?).ok())
+            .ok_or_else(|| format!("porta {named:?} não encontrada no pod {pod_name}"))?,
+        _ => port,
+    };
+    Ok((pod_name, pod_port))
+}
+
+/// `{"app": "web", "tier": "api"}` → `app=web,tier=api`.
+fn label_selector(labels: &Value) -> Option<String> {
+    let map = labels.as_object().filter(|m| !m.is_empty())?;
+    Some(map.iter().map(|(k, v)| format!("{k}={}", v.as_str().unwrap_or_default())).collect::<Vec<_>>().join(","))
+}
+
+/// Percent-encoding para um valor de query string.
+fn encode(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 /// Mensagem legível para os erros mais comuns.
-fn describe(error: kube::Error) -> String {
+pub(crate) fn describe(error: kube::Error) -> String {
     match error {
         kube::Error::Api(status) => match status.code {
             401 => format!("credenciais recusadas pelo cluster ({})", status.message),
@@ -459,6 +668,24 @@ mod tests {
     }
 
     #[test]
+    fn pods_and_ports() {
+        let pod = serde_json::json!({"metadata": {"annotations": {"kubectl.kubernetes.io/default-container": "app"}},
+          "spec": {"initContainers": [{"name": "migrate"}],
+            "containers": [{"name": "sidecar"}, {"name": "app", "ports": [{"containerPort": 8080, "name": "http"}, {"containerPort": 9090, "protocol": "TCP"}]}]}});
+        let (list, default) = pod_containers(&pod);
+        assert_eq!(default, "app");
+        assert_eq!(list.iter().map(|c| (c.name.as_str(), c.init)).collect::<Vec<_>>(), [("sidecar", false), ("app", false), ("migrate", true)]);
+        let ports = object_ports(Kind::Pod, &pod);
+        assert_eq!(ports[0], Port { port: 8080, name: "http".into(), protocol: "TCP".into() });
+        assert_eq!(ports.len(), 2);
+        let svc = serde_json::json!({"spec": {"ports": [{"port": 80, "targetPort": "http", "name": "web"}]}});
+        assert_eq!(object_ports(Kind::Service, &svc)[0].port, 80);
+        assert_eq!(label_selector(&serde_json::json!({"app": "web", "tier": "api"})).unwrap(), "app=web,tier=api");
+        assert!(label_selector(&serde_json::json!({})).is_none());
+        assert_eq!(encode("app=web,tier=a b"), "app%3Dweb%2Ctier%3Da%20b");
+    }
+
+    #[test]
     fn yaml_multiline() {
         let mut config = serde_json::json!({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "app"},
           "data": {"nginx.conf": "server {\n  listen 80;\n}\n"}});
@@ -498,6 +725,162 @@ mod live {
         assert!(text.contains(&format!("name: {}", pod.name)));
         assert!(!text.contains("managedFields"));
         let err = yaml(&client, Kind::Pod, Some("kube-system"), "nao-existe", false).await.unwrap_err();
+        assert!(err.starts_with("não encontrado"), "{err}");
+    }
+}
+
+/// Contra um nginx de teste: `kubectl create ns nexo-test; kubectl -n nexo-test create deployment web
+/// --image=nginx:alpine --port=80; kubectl -n nexo-test expose deployment web --port=8080 --target-port=80`.
+#[cfg(test)]
+mod live_actions {
+    use super::*;
+    use crate::session::Session;
+    use std::sync::{Arc, Mutex as StdMutex};
+    use tauri::ipc::{Channel, InvokeResponseBody};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    const NS: &str = "nexo-test";
+
+    async fn client() -> Client {
+        let current = contexts(None).unwrap().current.unwrap();
+        Kube::default().client(None, &current).await.unwrap()
+    }
+
+    /// Um pod do nginx pronto (espera o rollout de um teste anterior).
+    async fn web_pod(client: &Client) -> String {
+        for _ in 0..120 {
+            let table = list(client, Kind::Pod, Some(NS)).await.unwrap();
+            let ready = table.rows.iter().filter(|r| r.name.starts_with("web-")).collect::<Vec<_>>();
+            if let [only] = ready[..] {
+                if only.cells[1] == "1/1" && only.cells[2] == "Running" {
+                    return only.name.clone();
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        panic!("sem pod web pronto");
+    }
+
+    fn capture() -> (Channel<InvokeResponseBody>, Arc<StdMutex<Vec<u8>>>) {
+        let out = Arc::new(StdMutex::new(Vec::new()));
+        let sink = out.clone();
+        let channel = Channel::new(move |body| {
+            if let InvokeResponseBody::Raw(data) = body {
+                sink.lock().unwrap().extend(data);
+            }
+            Ok(())
+        });
+        (channel, out)
+    }
+
+    /// `Some(código)` quando o terminal termina.
+    type Exit = Arc<StdMutex<Option<Option<u32>>>>;
+
+    fn exit_capture() -> (Channel<Option<u32>>, Exit) {
+        let code = Arc::new(StdMutex::new(None));
+        let sink = code.clone();
+        let channel = Channel::new(move |body| {
+            if let InvokeResponseBody::Json(json) = body {
+                *sink.lock().unwrap() = Some(serde_json::from_str(&json).unwrap());
+            }
+            Ok(())
+        });
+        (channel, code)
+    }
+
+    async fn wait_for(what: impl Fn() -> bool) {
+        for _ in 0..100 {
+            if what() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        panic!("tempo esgotado");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn live_terminal() {
+        let client = client().await;
+        let pod = web_pod(&client).await;
+        let (containers, default) = containers(&client, NS, &pod).await.unwrap();
+        assert_eq!(default, "nginx");
+        assert_eq!(containers.len(), 1);
+
+        let (data, out) = capture();
+        let (exit, code) = exit_capture();
+        let mode = crate::k8s_term::Mode::Shell;
+        let term = crate::k8s_term::open(client.clone(), NS, &pod, &default, mode, 100, 30, data, exit).await.unwrap();
+        term.write(b"echo nexo-$((40+2)); stty size; exit 3\n").unwrap();
+        wait_for(|| code.lock().unwrap().is_some()).await;
+        let text = String::from_utf8_lossy(&out.lock().unwrap()).into_owned();
+        assert!(text.contains("nexo-42"), "{text}");
+        assert!(text.contains("30 100"), "{text}");
+        assert_eq!(*code.lock().unwrap(), Some(Some(3)));
+
+        let (data, out) = capture();
+        let (exit, code) = exit_capture();
+        let mode = crate::k8s_term::Mode::Logs { previous: false };
+        let term = crate::k8s_term::open(client.clone(), NS, &pod, &default, mode, 100, 30, data, exit).await.unwrap();
+        wait_for(|| !out.lock().unwrap().is_empty()).await;
+        let text = String::from_utf8_lossy(&out.lock().unwrap()).into_owned();
+        assert!(text.contains("\r\n"), "{text}");
+        term.write(b"\x03").unwrap();
+        wait_for(|| code.lock().unwrap().is_some()).await;
+
+        let err = crate::k8s_term::open(client, NS, &pod, "nao-existe", mode, 100, 30, capture().0, exit_capture().0).await;
+        assert!(err.is_err());
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn live_forward() {
+        let client = client().await;
+        web_pod(&client).await;
+        assert_eq!(ports(&client, Kind::Service, NS, "web").await.unwrap()[0].port, 8080);
+        assert_eq!(ports(&client, Kind::Deployment, NS, "web").await.unwrap()[0].port, 80);
+        let (pod, port) = resolve(&client, Kind::Service, NS, "web", 8080).await.unwrap();
+        assert!(pod.starts_with("web-") && port == 80, "{pod} {port}");
+        assert!(resolve(&client, Kind::Service, NS, "web", 9999).await.is_err());
+
+        let kube = Kube::default();
+        let info = kube.forwards.start(client.clone(), "ctx", NS, Kind::Service, "web", 8080, 0).await.unwrap();
+        for _ in 0..2 {
+            let mut socket = tokio::net::TcpStream::connect(("127.0.0.1", info.local_port)).await.unwrap();
+            socket.write_all(b"GET / HTTP/1.0\r\nHost: x\r\n\r\n").await.unwrap();
+            let mut reply = String::new();
+            socket.read_to_string(&mut reply).await.unwrap();
+            assert!(reply.contains("nginx"), "{reply}");
+        }
+        // Porta sem nada escutando no pod: o erro aparece na lista.
+        let bad = kube.forwards.start(client.clone(), "ctx", NS, Kind::Pod, &pod, 81, 0).await.unwrap();
+        let mut socket = tokio::net::TcpStream::connect(("127.0.0.1", bad.local_port)).await.unwrap();
+        let mut sink = Vec::new();
+        let _ = socket.read_to_end(&mut sink).await;
+        wait_for(|| kube.forwards.list().iter().any(|f| f.id == bad.id && f.error == "nada escutando na porta 81 do pod")).await;
+        println!("{:?}", kube.forwards.list());
+        kube.forwards.stop(info.id);
+        kube.forwards.stop(bad.id);
+        assert!(kube.forwards.list().is_empty());
+        wait_for(|| std::net::TcpStream::connect(("127.0.0.1", info.local_port)).is_err()).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn live_actions() {
+        let client = client().await;
+        act(&client, Kind::Deployment, Some(NS), "web", Action::Scale { replicas: 2 }).await.unwrap();
+        let text = yaml(&client, Kind::Deployment, Some(NS), "web", false).await.unwrap();
+        assert!(text.contains("replicas: 2"), "{text}");
+        act(&client, Kind::Deployment, Some(NS), "web", Action::Restart).await.unwrap();
+        let text = yaml(&client, Kind::Deployment, Some(NS), "web", false).await.unwrap();
+        assert!(text.contains("kubectl.kubernetes.io/restartedAt"), "{text}");
+        act(&client, Kind::Deployment, Some(NS), "web", Action::Scale { replicas: 1 }).await.unwrap();
+        assert!(act(&client, Kind::Pod, Some(NS), "web", Action::Scale { replicas: 1 }).await.is_err());
+        assert!(act(&client, Kind::Namespace, None, NS, Action::Delete).await.is_err());
+        let pod = web_pod(&client).await;
+        act(&client, Kind::Pod, Some(NS), &pod, Action::Delete).await.unwrap();
+        let err = act(&client, Kind::Pod, Some(NS), "nao-existe", Action::Delete).await.unwrap_err();
         assert!(err.starts_with("não encontrado"), "{err}");
     }
 }

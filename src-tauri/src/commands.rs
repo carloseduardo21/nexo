@@ -15,6 +15,8 @@ use tauri::{AppHandle, Manager, State};
 use crate::docker;
 use crate::hostinfo;
 use crate::k8s::{self, Kube};
+use crate::k8s_forward;
+use crate::k8s_term;
 use crate::local;
 use crate::rdp;
 use crate::session::{Session, SessionManager};
@@ -613,4 +615,104 @@ pub async fn k8s_yaml(
 ) -> Result<String, String> {
     let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
     k8s::yaml(&client, kind, namespace.as_deref(), &name, reveal).await
+}
+
+#[tauri::command]
+pub async fn k8s_action(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+    kind: k8s::Kind,
+    namespace: Option<String>,
+    name: String,
+    action: k8s::Action,
+) -> Result<(), String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    k8s::act(&client, kind, namespace.as_deref(), &name, action).await
+}
+
+#[derive(serde::Serialize)]
+pub struct PodContainers {
+    containers: Vec<k8s::ContainerInfo>,
+    default: String,
+}
+
+#[tauri::command]
+pub async fn k8s_containers(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+    namespace: String,
+    pod: String,
+) -> Result<PodContainers, String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    let (containers, default) = k8s::containers(&client, &namespace, &pod).await?;
+    Ok(PodContainers { containers, default })
+}
+
+#[tauri::command]
+pub async fn k8s_ports(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+    kind: k8s::Kind,
+    namespace: String,
+    name: String,
+) -> Result<Vec<k8s::Port>, String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    k8s::ports(&client, kind, &namespace, &name).await
+}
+
+/// Logs ou shell de um pod num terminal. Sem `container`, o padrão do pod.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn k8s_terminal(
+    sessions: State<'_, SessionManager>,
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+    namespace: String,
+    pod: String,
+    container: Option<String>,
+    mode: k8s_term::Mode,
+    cols: u16,
+    rows: u16,
+    on_data: Channel<InvokeResponseBody>,
+    on_exit: Channel<Option<u32>>,
+) -> Result<u32, String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    let container = match container.filter(|c| !c.is_empty()) {
+        Some(c) => c,
+        None => k8s::containers(&client, &namespace, &pod).await?.1,
+    };
+    let term = k8s_term::open(client, &namespace, &pod, &container, mode, cols, rows, on_data, on_exit).await?;
+    let id = sessions.next_id();
+    sessions.insert(id, Arc::new(term));
+    Ok(id)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn k8s_forward_start(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+    kind: k8s::Kind,
+    namespace: String,
+    name: String,
+    port: u16,
+    local_port: u16,
+) -> Result<k8s_forward::ForwardInfo, String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    kube.forwards.start(client, &context, &namespace, kind, &name, port, local_port).await
+}
+
+#[tauri::command]
+pub fn k8s_forward_stop(kube: State<'_, Kube>, id: u32) {
+    kube.forwards.stop(id);
+}
+
+#[tauri::command]
+pub fn k8s_forwards(kube: State<'_, Kube>) -> Vec<k8s_forward::ForwardInfo> {
+    kube.forwards.list()
 }

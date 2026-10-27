@@ -3,6 +3,8 @@ mod docker;
 mod flow;
 mod hostinfo;
 mod k8s;
+mod k8s_forward;
+mod k8s_term;
 mod keyhook;
 mod local;
 mod rdp;
@@ -67,6 +69,13 @@ pub fn run() {
             commands::k8s_namespaces,
             commands::k8s_list,
             commands::k8s_yaml,
+            commands::k8s_action,
+            commands::k8s_containers,
+            commands::k8s_ports,
+            commands::k8s_terminal,
+            commands::k8s_forward_start,
+            commands::k8s_forward_stop,
+            commands::k8s_forwards,
             commands::sftp_home,
             commands::sftp_list,
             commands::sftp_mkdir,
