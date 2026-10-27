@@ -2,6 +2,7 @@ mod commands;
 mod docker;
 mod flow;
 mod hostinfo;
+mod k8s;
 mod keyhook;
 mod local;
 mod rdp;
@@ -17,10 +18,16 @@ mod vault;
 use tauri::Manager;
 
 pub fn run() {
+    // Plugins `exec` do kubeconfig (aws, gke-gcloud-auth-plugin, kubelogin…) sem abrir uma
+    // janela de console a cada token: o app não tem console para herdar.
+    #[cfg(windows)]
+    std::env::set_var("KUBE_RS_UNSTABLE_CREATE_NO_WINDOW", "1");
+
     tauri::Builder::default()
         .manage(session::SessionManager::default())
         .manage(sftp::Transfers::default())
         .manage(tunnel::Tunnels::default())
+        .manage(k8s::Kube::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -56,6 +63,10 @@ pub fn run() {
             commands::host_metrics,
             commands::docker_list,
             commands::docker_action,
+            commands::k8s_contexts,
+            commands::k8s_namespaces,
+            commands::k8s_list,
+            commands::k8s_yaml,
             commands::sftp_home,
             commands::sftp_list,
             commands::sftp_mkdir,

@@ -14,6 +14,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::docker;
 use crate::hostinfo;
+use crate::k8s::{self, Kube};
 use crate::local;
 use crate::rdp;
 use crate::session::{Session, SessionManager};
@@ -566,4 +567,50 @@ pub fn tunnel_stop(app: AppHandle, tunnels: State<'_, Tunnels>, id: String) {
 #[tauri::command]
 pub fn tunnel_statuses(tunnels: State<'_, Tunnels>) -> std::collections::HashMap<String, tunnel::Status> {
     tunnels.statuses()
+}
+
+/// `kubeconfig` vazio ou ausente = o padrão (`KUBECONFIG` ou `~/.kube/config`).
+fn kubeconfig(path: &Option<String>) -> Option<&str> {
+    path.as_deref().filter(|p| !p.trim().is_empty())
+}
+
+/// Relê o kubeconfig (e descarta os clientes antigos: contextos e credenciais podem ter mudado).
+#[tauri::command]
+pub async fn k8s_contexts(kube: State<'_, Kube>, kubeconfig: Option<String>) -> Result<k8s::Contexts, String> {
+    kube.forget().await;
+    k8s::contexts(self::kubeconfig(&kubeconfig))
+}
+
+#[tauri::command]
+pub async fn k8s_namespaces(kube: State<'_, Kube>, kubeconfig: Option<String>, context: String) -> Result<Vec<String>, String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    k8s::namespaces(&client).await
+}
+
+/// `namespace` ausente = todos.
+#[tauri::command]
+pub async fn k8s_list(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+    kind: k8s::Kind,
+    namespace: Option<String>,
+) -> Result<k8s::Table, String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    k8s::list(&client, kind, namespace.as_deref()).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn k8s_yaml(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+    kind: k8s::Kind,
+    namespace: Option<String>,
+    name: String,
+    reveal: bool,
+) -> Result<String, String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    k8s::yaml(&client, kind, namespace.as_deref(), &name, reveal).await
 }

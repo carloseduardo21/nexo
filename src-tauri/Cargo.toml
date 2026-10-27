@@ -42,6 +42,11 @@ ironrdp-input = "0.8"
 ironrdp-cliprdr = "0.8"
 ironrdp-egfx = { version = "0.4", features = ["openh264-bundled"] }
 arboard = { version = "3.7", default-features = false }
+# Kubernetes: cliente oficial em Rust (lê o kubeconfig, inclusive plugins `exec` de autenticação).
+kube = { version = "4.2", default-features = false, features = ["client", "rustls-tls", "ring"] }
+k8s-openapi = { version = "0.28", features = ["latest"] }
+http = "1"
+serde-saphyr = "0.0.29"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
