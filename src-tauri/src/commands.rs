@@ -33,18 +33,21 @@ pub async fn list_shells() -> Vec<ShellProfile> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn pty_spawn(
     app: AppHandle,
     sessions: State<'_, SessionManager>,
     profile_id: String,
     cols: u16,
     rows: u16,
+    exec: Option<Exec>,
     on_data: Channel<InvokeResponseBody>,
     on_exit: Channel<Option<u32>>,
 ) -> Result<u32, String> {
     let profile = shells::find(&profile_id).ok_or_else(|| format!("shell desconhecido: {profile_id}"))?;
+    let command = exec.map(|e| e.command()).transpose()?;
     let id = sessions.next_id();
-    let pty = local::spawn(app, id, &profile, cols, rows, on_data, on_exit)?;
+    let pty = local::spawn(app, id, &profile, command.as_deref(), cols, rows, on_data, on_exit)?;
     sessions.insert(id, pty as Arc<_>);
     Ok(id)
 }
@@ -330,21 +333,26 @@ pub fn session_kill(sessions: State<'_, SessionManager>, id: u32) {
 
 // ---------- Painel do host ----------
 
-/// Sessão SSH `id` (para rodar comandos no servidor).
-fn ssh_for(sessions: &SessionManager, id: u32) -> Result<Arc<dyn Session>, String> {
+/// Roda um script curto onde está o terminal `id`: no servidor (canal extra da conexão SSH)
+/// ou na própria máquina (terminal Linux ou WSL).
+async fn run_on(sessions: &SessionManager, id: u32, script: &str, input: Option<&[u8]>) -> Result<ssh::Output, String> {
     let session = sessions.get(id).ok_or("sessão encerrada")?;
-    session.as_ssh().ok_or("não é uma sessão SSH")?;
-    Ok(session)
+    if let Some(ssh) = session.as_ssh() {
+        return ssh.run_with_input(script, input).await;
+    }
+    match session.local_profile() {
+        Some(profile) => local::run(profile, script, input).await,
+        None => Err("não é um terminal SSH, Linux ou WSL".into()),
+    }
 }
 
 #[tauri::command]
 pub async fn host_metrics(sessions: State<'_, SessionManager>, id: u32) -> Result<hostinfo::Metrics, String> {
-    let session = ssh_for(&sessions, id)?;
-    let out = session.as_ssh().unwrap().run(hostinfo::METRICS_SCRIPT).await?;
+    let out = run_on(&sessions, id, hostinfo::METRICS_SCRIPT, None).await?;
     match out.status {
         Some(0) => hostinfo::parse(&out.stdout()),
-        Some(3) => Err("métricas só funcionam em servidores Linux".into()),
-        _ => Err(format!("o servidor não devolveu as métricas: {}", out.stderr())),
+        Some(3) => Err("métricas só funcionam em Linux".into()),
+        _ => Err(format!("não deu para ler as métricas: {}", out.stderr())),
     }
 }
 
@@ -352,29 +360,29 @@ pub async fn host_metrics(sessions: State<'_, SessionManager>, id: u32) -> Resul
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Sudo {
-    host_id: String,
+    /// Host salvo (a senha dele serve para o sudo); ausente em terminais locais.
+    host_id: Option<String>,
     password: Option<String>,
     /// Salvar a senha digitada no cofre, se o sudo aceitar.
     #[serde(default)]
     remember: bool,
 }
 
-/// Roda um script do Docker na sessão `id`, direto ou via sudo.
+/// Roda um script do Docker onde está o terminal `id`, direto ou via sudo.
 async fn run_docker(sessions: &SessionManager, vault: &Vault, id: u32, script: &str, sudo: Option<Sudo>) -> Result<String, docker::Error> {
-    let session = ssh_for(sessions, id).map_err(docker::Error::other)?;
-    let ssh = session.as_ssh().unwrap();
     let typed = sudo.as_ref().and_then(|s| s.password.clone());
-    let password = typed.clone().or_else(|| sudo.as_ref().and_then(|s| vault.host(&s.host_id)?.1.password));
+    let host_id = sudo.as_ref().and_then(|s| s.host_id.clone());
+    let password = typed.clone().or_else(|| vault.host(host_id.as_deref()?)?.1.password);
     let command = docker::with_sudo(script, sudo.is_some(), password.is_some());
     let input = password.map(|p| format!("{p}\n"));
-    let out = ssh.run_with_input(&command, input.as_deref().map(str::as_bytes)).await.map_err(docker::Error::other)?;
+    let out = run_on(sessions, id, &command, input.as_deref().map(str::as_bytes)).await.map_err(docker::Error::other)?;
     if out.status != Some(0) {
         return Err(docker::describe_error(out.status, &out.stderr()));
     }
-    if let (Some(sudo), Some(password)) = (sudo, typed) {
+    if let (Some(sudo), Some(password), Some(host_id)) = (sudo, typed, host_id) {
         // Só se o host ainda não tem senha: a salva é a do login SSH, que pode ser outra.
-        if sudo.remember && vault.host(&sudo.host_id).is_some_and(|(_, s)| s.password.is_none()) {
-            let _ = vault.update_secret(&sudo.host_id, |s| s.password = Some(password));
+        if sudo.remember && vault.host(&host_id).is_some_and(|(_, s)| s.password.is_none()) {
+            let _ = vault.update_secret(&host_id, |s| s.password = Some(password));
         }
     }
     Ok(out.stdout())

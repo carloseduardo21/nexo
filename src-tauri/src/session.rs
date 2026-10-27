@@ -18,6 +18,10 @@ pub trait Session: Send + Sync {
     fn as_rdp(&self) -> Option<&crate::rdp::RdpSession> {
         None
     }
+    /// Terminais locais: o perfil (o painel do host roda comandos nele, se for Linux/WSL).
+    fn local_profile(&self) -> Option<&crate::shells::ShellProfile> {
+        None
+    }
 }
 
 #[derive(Default)]

@@ -19,6 +19,7 @@ pub struct LocalPty {
     master: Mutex<Box<dyn MasterPty + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     flow: Arc<Flow>,
+    profile: ShellProfile,
 }
 
 impl Session for LocalPty {
@@ -43,12 +44,60 @@ impl Session for LocalPty {
     fn ack(&self, bytes: usize) {
         self.flow.ack(bytes);
     }
+
+    fn local_profile(&self) -> Option<&ShellProfile> {
+        Some(&self.profile)
+    }
 }
 
+/// `sh -c <script>` no Linux/macOS local ou numa distro do WSL. PowerShell e cmd não têm.
+pub fn sh_command(profile: &ShellProfile, script: &str) -> Option<(String, Vec<String>)> {
+    match profile.kind.as_str() {
+        "unix" => Some(("sh".into(), vec!["-c".into(), script.into()])),
+        "wsl" => {
+            let distro = profile.id.strip_prefix("wsl:")?;
+            Some(("wsl.exe".into(), ["-d", distro, "-e", "sh", "-c", script].map(String::from).to_vec()))
+        }
+        _ => None,
+    }
+}
+
+/// Roda um script curto (painel do host) fora do terminal, como o `Connection::run` do SSH.
+pub async fn run(profile: &ShellProfile, script: &str, input: Option<&[u8]>) -> Result<crate::ssh::Output, String> {
+    use tokio::io::AsyncWriteExt;
+    let (program, args) = sh_command(profile, script).ok_or("só em terminais Linux e WSL")?;
+    let mut command = tokio::process::Command::new(program);
+    command
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let mut stdin = child.stdin.take();
+    if let (Some(stdin), Some(input)) = (stdin.as_mut(), input) {
+        let _ = stdin.write_all(input).await;
+    }
+    drop(stdin);
+    let out = tokio::time::timeout(std::time::Duration::from_secs(20), child.wait_with_output())
+        .await
+        .map_err(|_| "o comando demorou demais".to_owned())?
+        .map_err(|e| e.to_string())?;
+    Ok(crate::ssh::Output {
+        status: out.status.code().and_then(|c| u32::try_from(c).ok()),
+        stdout: out.stdout,
+        stderr: out.stderr,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn spawn(
     app: AppHandle,
     id: u32,
     profile: &ShellProfile,
+    command: Option<&str>,
     cols: u16,
     rows: u16,
     on_data: Channel<InvokeResponseBody>,
@@ -58,8 +107,13 @@ pub fn spawn(
         .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| e.to_string())?;
 
-    let mut cmd = CommandBuilder::new(&profile.program);
-    cmd.args(&profile.args);
+    // Com `command` (logs/shell de um container), roda só ele no lugar do shell.
+    let (program, args) = match command {
+        Some(script) => sh_command(profile, script).ok_or("só em terminais Linux e WSL")?,
+        None => (profile.program.clone(), profile.args.clone()),
+    };
+    let mut cmd = CommandBuilder::new(program);
+    cmd.args(args);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
@@ -126,5 +180,25 @@ pub fn spawn(
         master: Mutex::new(pair.master),
         killer: Mutex::new(killer),
         flow,
+        profile: profile.clone(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// O script chega inteiro (aspas, `$`, quebras de linha) e o código de saída volta.
+    #[tokio::test]
+    #[ignore]
+    async fn live_wsl_run() {
+        let profile = crate::shells::profiles().iter().find(|p| p.kind == "wsl" || p.kind == "unix").expect("sem WSL").clone();
+        let script = "a='x y'; echo \"[$a]\" \"$(printf '%s' \"q'q\")\"\nread line; echo \"got:$line\"; exit 7";
+        let out = run(&profile, script, Some(b"segredo\n")).await.unwrap();
+        assert_eq!(out.stdout(), "[x y] q'q\ngot:segredo\n", "{}", out.stderr());
+        assert_eq!(out.status, Some(7));
+        let metrics = run(&profile, crate::hostinfo::METRICS_SCRIPT, None).await.unwrap();
+        assert_eq!(metrics.status, Some(0), "{}", metrics.stderr());
+        crate::hostinfo::parse(&metrics.stdout()).unwrap();
+    }
 }

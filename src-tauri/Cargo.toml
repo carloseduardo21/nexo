@@ -19,7 +19,7 @@ portable-pty = "0.9"
 # `ring` em vez de `aws-lc-rs`: compila no Windows sem precisar de CMake/NASM.
 russh = { version = "0.64.1", default-features = false, features = ["ring", "rsa", "flate2"] }
 russh-sftp = "3.0.1"
-tokio = { version = "1.54.1", features = ["net", "sync", "time", "io-util", "macros", "fs"] }
+tokio = { version = "1.54.1", features = ["net", "sync", "time", "io-util", "macros", "fs", "process"] }
 tauri-plugin-dialog = "2.8.3"
 tauri-plugin-opener = "2.7.2"
 keyring = "4.2.0"

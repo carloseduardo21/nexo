@@ -118,11 +118,7 @@ impl SshSession {
         self.sftp.lock().await.take();
     }
 
-    /// Roda um comando curto num canal extra da mesma conexão do terminal.
-    pub async fn run(&self, command: &str) -> Result<Output, String> {
-        self.conn.run(command).await
-    }
-
+    /// Roda um comando curto num canal extra da mesma conexão do terminal (com `input` na entrada).
     pub async fn run_with_input(&self, command: &str, input: Option<&[u8]>) -> Result<Output, String> {
         self.conn.run_with_input(command, input).await
     }
@@ -222,11 +218,12 @@ impl Connection {
     }
 
     /// Roda um comando curto num canal extra (sem PTY) e junta a saída.
+    #[cfg(test)]
     pub async fn run(&self, command: &str) -> Result<Output, String> {
         self.run_with_input(command, None).await
     }
 
-    /// Como `run`, mandando `input` na entrada do comando (ex.: a senha para `sudo -S`).
+    /// Como um `run`, mandando `input` na entrada do comando (ex.: a senha para `sudo -S`).
     pub async fn run_with_input(&self, command: &str, input: Option<&[u8]>) -> Result<Output, String> {
         let collect = async {
             let mut channel = self.handle.channel_open_session().await.map_err(|e| format!("não foi possível abrir um canal: {e}"))?;
