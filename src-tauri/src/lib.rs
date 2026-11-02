@@ -3,6 +3,7 @@ mod docker;
 mod flow;
 mod hostinfo;
 mod k8s;
+mod k8s_argo;
 mod k8s_forward;
 mod k8s_seal;
 mod k8s_term;
@@ -85,6 +86,9 @@ pub fn run() {
             commands::k8s_sealed,
             commands::k8s_secret_plain,
             commands::k8s_seal,
+            commands::k8s_argo_apps,
+            commands::k8s_argo_app,
+            commands::k8s_argo_action,
             commands::sftp_home,
             commands::sftp_list,
             commands::sftp_mkdir,

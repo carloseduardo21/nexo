@@ -223,7 +223,12 @@ impl Resource {
         match self {
             Resource::Builtin(kind) => kind.path(namespace),
             Resource::Custom(c) => {
-                let base = format!("/apis/{}/{}", checked(&c.group)?, checked(&c.version)?);
+                // Grupo vazio: tipos do núcleo que a lista fixa não tem (vêm da descoberta da API).
+                let base = if c.group.is_empty() {
+                    format!("/api/{}", checked(&c.version)?)
+                } else {
+                    format!("/apis/{}/{}", checked(&c.group)?, checked(&c.version)?)
+                };
                 Ok(match namespace.filter(|_| c.namespaced) {
                     Some(ns) => format!("{base}/namespaces/{}/{}", checked(ns)?, checked(&c.plural)?),
                     None => format!("{base}/{}", checked(&c.plural)?),
@@ -451,11 +456,11 @@ pub(crate) async fn get_json(client: &Client, path: String) -> Result<Value, Str
     client.request(get(path, "application/json")?).await.map_err(describe)
 }
 
-async fn send(client: &Client, request: http::Request<Vec<u8>>) -> Result<(), String> {
+pub(crate) async fn send(client: &Client, request: http::Request<Vec<u8>>) -> Result<(), String> {
     client.request::<Value>(request).await.map(drop).map_err(describe)
 }
 
-fn merge_patch(path: String, body: &Value) -> Result<http::Request<Vec<u8>>, String> {
+pub(crate) fn merge_patch(path: String, body: &Value) -> Result<http::Request<Vec<u8>>, String> {
     http::Request::patch(path)
         .header(http::header::CONTENT_TYPE, "application/merge-patch+json")
         .header(http::header::ACCEPT, "application/json")

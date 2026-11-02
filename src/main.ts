@@ -6,6 +6,7 @@ import { app as state, connectHost, openDialog, showView, type View } from './li
 import { side, type SidePanel } from './lib/side.svelte';
 import { hostinfo } from './lib/hostinfo.svelte';
 import { forwards, openDetail, openSeal, selectKind, type KindKey } from './lib/k8s.svelte';
+import { argo, openApp, openSync } from './lib/argo.svelte';
 
 // Fora do Tauri (navegador comum, só em dev): backend simulado para ver a interface.
 const mocked = import.meta.env.DEV && !('__TAURI_INTERNALS__' in window);
@@ -40,6 +41,17 @@ if (mocked) {
   // `?kind=<tipo>`: tipo escolhido na página Kubernetes (ex.: `crd:sealedsecrets.bitnami.com`).
   const kind = params.get('kind');
   if (kind) setTimeout(() => selectKind(kind as KindKey), 400);
+  // `?argo=<app>`: abre um app do Argo CD (`&tab=resources|history`, `&sync=1` abre o diálogo de sync).
+  const argoApp = params.get('argo');
+  if (argoApp)
+    setTimeout(() => {
+      selectKind('crd:applications.argoproj.io');
+      if (argoApp === 'list') return;
+      openApp('argocd', argoApp);
+      const tab = params.get('tab');
+      if (tab === 'resources' || tab === 'history') argo.tab = tab;
+      if (params.get('sync')) setTimeout(() => argo.detail && openSync(argo.detail.app), 400);
+    }, 600);
   // `?seal=new|edit|convert`: diálogo do Sealed Secrets.
   const sealMode = params.get('seal');
   if (sealMode)

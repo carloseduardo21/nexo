@@ -20,7 +20,9 @@
   import XIcon from '@lucide/svelte/icons/x';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
+  import ArgoPage from './ArgoPage.svelte';
   import {
+    ARGO,
     SEALED,
     defaultNamespace,
     hasSealed,
@@ -55,7 +57,7 @@
   let openGroups = $state<Record<string, boolean>>({});
   const customGroups = $derived.by(() => {
     const map = new Map<string, KubeCustom[]>();
-    for (const c of k8s.customs.filter((c) => customKey(c) !== SEALED)) map.set(c.group, [...(map.get(c.group) ?? []), c]);
+    for (const c of k8s.customs.filter((c) => customKey(c) !== SEALED && customKey(c) !== ARGO)) map.set(c.group, [...(map.get(c.group) ?? []), c]);
     return [...map];
   });
   let sort = $state<{ column: number; desc: boolean } | null>(null);
@@ -327,6 +329,9 @@
       </div>
     </aside>
 
+    {#if k8s.kind === ARGO}
+      <ArgoPage />
+    {:else}
     <section class="flex min-w-0 flex-1 flex-col">
       <header class="flex h-12 shrink-0 items-center gap-3 border-b px-4">
         <h1 class="font-medium">{info.label}</h1>
@@ -457,6 +462,7 @@
         {/if}
       </div>
     </section>
+    {/if}
 
     {#if k8s.detail}
       <KubeDetail />

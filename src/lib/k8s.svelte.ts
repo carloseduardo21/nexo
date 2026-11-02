@@ -18,8 +18,9 @@ import { settings } from './settings.svelte';
 
 export const LIST_INTERVAL = 5000;
 
-/** Tipo escolhido: um conhecido ou `crd:<plural>.<grupo>`. */
-export type KindKey = KubeKind | `crd:${string}`;
+/** Tipo escolhido: um conhecido, `crd:<plural>.<grupo>` ou, para abrir um recurso de tipo
+ * qualquer (da árvore do Argo CD), `api:<grupo>|<versão>|<plural>|<1/0 namespace>|<Kind>`. */
+export type KindKey = KubeKind | `crd:${string}` | `api:${string}`;
 
 export interface KindInfo {
   kind: KindKey;
@@ -63,25 +64,72 @@ const customOf = (key: KindKey) => k8s.customs.find((c) => customKey(c) === key)
 export const SEALED: KindKey = 'crd:sealedsecrets.bitnami.com';
 export const hasSealed = () => k8s.customs.some((c) => customKey(c) === SEALED);
 
-/** Os grupos da barra lateral (com o Sealed Secrets, se o cluster tiver). */
+/** Argo CD: os Applications têm uma tela própria (no lugar da tabela). */
+export const ARGO: KindKey = 'crd:applications.argoproj.io';
+export const hasArgo = () => k8s.customs.some((c) => customKey(c) === ARGO);
+
+/** Os grupos da barra lateral (com o Sealed Secrets e o Argo CD, se o cluster tiver). */
 export function kindGroups() {
-  if (!hasSealed()) return KIND_GROUPS;
-  return KIND_GROUPS.map((g) => {
-    const at = g.kinds.findIndex((k) => k.kind === 'secret');
-    return at < 0 ? g : { ...g, kinds: [...g.kinds.slice(0, at + 1), kindInfo(SEALED), ...g.kinds.slice(at + 1)] };
-  });
+  let groups = KIND_GROUPS;
+  if (hasSealed())
+    groups = groups.map((g) => {
+      const at = g.kinds.findIndex((k) => k.kind === 'secret');
+      return at < 0 ? g : { ...g, kinds: [...g.kinds.slice(0, at + 1), kindInfo(SEALED), ...g.kinds.slice(at + 1)] };
+    });
+  if (hasArgo()) groups = [{ label: 'Argo CD', kinds: [kindInfo(ARGO)] }, ...groups];
+  return groups;
+}
+
+/** Grupo da API de cada tipo conhecido (para achar o tipo de um recurso pelo grupo e Kind). */
+const BUILTIN_GROUPS: Partial<Record<KubeKind, string>> = {
+  deployment: 'apps',
+  statefulSet: 'apps',
+  daemonSet: 'apps',
+  replicaSet: 'apps',
+  job: 'batch',
+  cronJob: 'batch',
+  ingress: 'networking.k8s.io',
+  networkPolicy: 'networking.k8s.io',
+  horizontalPodAutoscaler: 'autoscaling',
+  storageClass: 'storage.k8s.io',
+};
+
+/** O tipo para abrir um recurso (o conhecido, com as ações dele, ou o caminho descoberto). */
+export function kindKeyFor(r: { group: string; kind: string; resource: Omit<KubeCustom, 'kind'> | null }): KindKey | null {
+  const camel = (r.kind[0]?.toLowerCase() ?? '') + r.kind.slice(1);
+  const builtin = BUILTIN.find((b) => b.kind === camel);
+  if (builtin && (BUILTIN_GROUPS[camel as KubeKind] ?? '') === r.group) return builtin.kind;
+  const custom = k8s.customs.find((c) => c.group === r.group && c.kind === r.kind);
+  if (custom) return customKey(custom);
+  const x = r.resource;
+  return x ? `api:${x.group}|${x.version}|${x.plural}|${x.namespaced ? 1 : 0}|${r.kind}` : null;
+}
+
+function apiOf(key: KindKey) {
+  const [group, version, plural, namespaced, kind] = key.slice(4).split('|');
+  return { group, version, plural, namespaced: namespaced === '1', kind };
 }
 
 export function kindInfo(key: KindKey): KindInfo {
   const builtin = BUILTIN.find((i) => i.kind === key);
   if (builtin) return builtin;
   if (key === SEALED) return { kind: key, label: 'Sealed Secrets', namespaced: true };
+  // Os apps ficam no namespace do Argo CD: a tela mostra todos e filtra por projeto.
+  if (key === ARGO) return { kind: key, label: 'Applications', namespaced: false };
+  if (key.startsWith('api:')) {
+    const a = apiOf(key);
+    return { kind: key, label: a.kind, namespaced: a.namespaced };
+  }
   const custom = customOf(key);
   return { kind: key, label: custom?.kind ?? key.slice(4), namespaced: custom?.namespaced ?? true };
 }
 
 /** O que vai para o backend; null = custom resource que este cluster não tem (ainda carregando). */
 function resourceOf(key: KindKey): KubeResource | null {
+  if (key.startsWith('api:')) {
+    const { group, version, plural, namespaced } = apiOf(key);
+    return { group, version, plural, namespaced };
+  }
   if (!key.startsWith('crd:')) return key as KubeKind;
   const c = customOf(key);
   return c ? { group: c.group, version: c.version, plural: c.plural, namespaced: c.namespaced } : null;
@@ -162,7 +210,7 @@ export async function loadContexts() {
   }
   const names = k8s.config.contexts.map((c) => c.name);
   const last = saved();
-  if (last.kind) k8s.kind = last.kind;
+  if (last.kind && !last.kind.startsWith('api:')) k8s.kind = last.kind;
   noMetrics.clear();
   const pick = [k8s.context, last.context, k8s.config.current, names[0]].find((n) => n && names.includes(n));
   if (pick) selectContext(pick);
@@ -224,7 +272,8 @@ const noMetrics = new Set<string>();
 /** Atualiza a lista visível. Respostas que chegam depois de mudar a escolha são descartadas. */
 export async function loadList() {
   const resource = resourceOf(k8s.kind);
-  if (!k8s.context || !resource) return;
+  // Applications do Argo CD: a tela própria consulta o que precisa.
+  if (!k8s.context || !resource || k8s.kind === ARGO) return;
   const key = listKey();
   if (inFlight === key) return;
   inFlight = key;

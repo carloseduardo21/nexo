@@ -15,6 +15,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::docker;
 use crate::hostinfo;
 use crate::k8s::{self, Kube};
+use crate::k8s_argo;
 use crate::k8s_forward;
 use crate::k8s_seal;
 use crate::k8s_term;
@@ -784,4 +785,32 @@ pub async fn k8s_seal(kube: State<'_, Kube>, kubeconfig: Option<String>, context
         tokio::fs::write(&path, &yaml).await.map_err(|e| format!("{path}: {e}"))?;
     }
     Ok(yaml)
+}
+
+/// Argo CD: os Applications do cluster, com os projetos e a URL da interface web.
+#[tauri::command]
+pub async fn k8s_argo_apps(kube: State<'_, Kube>, kubeconfig: Option<String>, context: String) -> Result<k8s_argo::Apps, String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    k8s_argo::apps(&client).await
+}
+
+/// Um Application: a árvore de recursos (gerenciados e o que o cluster criou) e o histórico.
+#[tauri::command]
+pub async fn k8s_argo_app(kube: State<'_, Kube>, kubeconfig: Option<String>, context: String, namespace: String, name: String) -> Result<k8s_argo::Detail, String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    k8s_argo::app(&client, &namespace, &name).await
+}
+
+/// Sincronizar, atualizar, voltar versão, encerrar a operação ou ligar/desligar o auto-sync.
+#[tauri::command]
+pub async fn k8s_argo_action(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+    namespace: String,
+    name: String,
+    action: k8s_argo::Action,
+) -> Result<(), String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    k8s_argo::act(&client, &namespace, &name, action).await
 }

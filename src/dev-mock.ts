@@ -166,6 +166,130 @@ function kubeList(resource: string | { plural: string }, namespace: string | nul
   return { ...table, rows: table.rows.filter((r) => !namespace || !r.namespace || r.namespace === namespace), truncated: false };
 }
 
+// Argo CD: apps em alguns projetos, com estados variados, e a árvore de um deles.
+const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+const GITOPS = 'https://github.com/empresa/gitops.git';
+type MockApp = Record<string, any>;
+function argoApp(name: string, project: string, path: string, health: string, sync: string, extra: MockApp = {}): MockApp {
+  return {
+    name,
+    namespace: 'argocd',
+    project,
+    sources: [{ repoUrl: GITOPS, path, chart: '', targetRevision: 'main', ref: '' }],
+    destServer: 'https://kubernetes.default.svc',
+    destName: '',
+    destNamespace: name.split('-')[0],
+    inCluster: true,
+    sync,
+    revisions: ['9f2c4e1a7b3d5f6e8a0c1b2d3e4f5a6b7c8d9e0f'],
+    health,
+    healthMessage: '',
+    autoSync: true,
+    prune: true,
+    selfHeal: false,
+    operation: { phase: 'Succeeded', message: 'successfully synced (all tasks run)', startedAt: minutesAgo(42), finishedAt: minutesAgo(41.8), revision: '9f2c4e1', initiatedBy: '', automated: true, dryRun: false },
+    busy: false,
+    reconciledAt: minutesAgo(1),
+    created: minutesAgo(60 * 24 * 40),
+    labels: {},
+    conditions: [],
+    counts: { total: 8, outOfSync: sync === 'OutOfSync' ? 2 : 0, degraded: health === 'Degraded' ? 1 : 0, progressing: health === 'Progressing' ? 1 : 0, missing: 0 },
+    ...extra,
+  };
+}
+const argoApps = [
+  argoApp('loja-api', 'pagamentos', 'apps/loja/api', 'Degraded', 'OutOfSync', {
+    autoSync: false,
+    operation: { phase: 'Failed', message: 'one or more objects failed to apply: Deployment.apps "loja-worker" is invalid', startedAt: minutesAgo(12), finishedAt: minutesAgo(11.9), revision: '9f2c4e1', initiatedBy: 'carlos', automated: false, dryRun: false },
+    conditions: [{ type: 'SyncError', message: 'Failed sync attempt to 9f2c4e1: one or more objects failed to apply', time: minutesAgo(12) }],
+  }),
+  argoApp('loja-checkout', 'pagamentos', 'apps/loja/checkout', 'Healthy', 'Synced'),
+  argoApp('loja-notificacoes', 'pagamentos', 'apps/loja/notificacoes', 'Progressing', 'Synced', {
+    busy: true,
+    operation: { phase: 'Running', message: 'waiting for healthy state of apps/Deployment/notificacoes', startedAt: minutesAgo(0.5), finishedAt: '', revision: '9f2c4e1', initiatedBy: '', automated: true, dryRun: false },
+  }),
+  argoApp('monitoring-stack', 'plataforma', '', 'Healthy', 'Synced', {
+    sources: [
+      { repoUrl: 'https://prometheus-community.github.io/helm-charts', path: '', chart: 'kube-prometheus-stack', targetRevision: '65.1.0', ref: '' },
+      { repoUrl: GITOPS, path: '', chart: '', targetRevision: 'main', ref: 'values' },
+    ],
+    revisions: ['65.1.0', '9f2c4e1a7b3d5f6e8a0c1b2d3e4f5a6b7c8d9e0f'],
+    counts: { total: 112, outOfSync: 0, degraded: 0, progressing: 0, missing: 0 },
+  }),
+  argoApp('ingress-nginx', 'plataforma', 'infra/ingress-nginx', 'Healthy', 'Synced', { selfHeal: true }),
+  argoApp('cert-manager', 'plataforma', 'infra/cert-manager', 'Healthy', 'OutOfSync', { counts: { total: 47, outOfSync: 1, degraded: 0, progressing: 0, missing: 0 } }),
+  argoApp('dados-postgres', 'dados', 'apps/dados/postgres', 'Suspended', 'Synced', { autoSync: false, prune: false }),
+  argoApp('dados-etl', 'dados', 'apps/dados/etl', 'Missing', 'OutOfSync', {
+    destServer: 'https://k8s-analytics.empresa.com:6443',
+    inCluster: false,
+    autoSync: false,
+    operation: null,
+  }),
+  argoApp('guestbook', 'default', 'guestbook', 'Healthy', 'Synced', { sources: [{ repoUrl: 'https://github.com/argoproj/argocd-example-apps.git', path: 'guestbook', chart: '', targetRevision: 'HEAD', ref: '' }] }),
+];
+const argoProjects = [
+  { name: 'dados', namespace: 'argocd', description: 'Bancos e pipelines do time de dados' },
+  { name: 'default', namespace: 'argocd', description: '' },
+  { name: 'pagamentos', namespace: 'argocd', description: 'Loja, checkout e notificações' },
+  { name: 'plataforma', namespace: 'argocd', description: 'Infra compartilhada do cluster' },
+];
+
+function argoNode(kind: string, name: string, parent: string, extra: MockApp = {}): MockApp {
+  const group = { Deployment: 'apps', ReplicaSet: 'apps', StatefulSet: 'apps', Ingress: 'networking.k8s.io', HorizontalPodAutoscaler: 'autoscaling', CronJob: 'batch', Job: 'batch', SealedSecret: 'bitnami.com' }[kind] ?? '';
+  const managed = !parent || extra.managed;
+  return {
+    id: `${group}/${kind}/loja/${name}`,
+    parent,
+    group,
+    version: kind === 'SealedSecret' ? 'v1alpha1' : kind === 'HorizontalPodAutoscaler' ? 'v2' : 'v1',
+    kind,
+    namespace: 'loja',
+    name,
+    managed,
+    sync: managed ? 'Synced' : '',
+    health: ['ConfigMap', 'SealedSecret', 'Secret'].includes(kind) ? '' : 'Healthy',
+    healthMessage: '',
+    result: '',
+    hook: false,
+    requiresPruning: false,
+    info: [],
+    images: [],
+    created: minutesAgo(600),
+    old: false,
+    resource: null,
+    ...extra,
+  };
+}
+const RS = 'apps/ReplicaSet/loja/';
+const argoNodes = [
+  argoNode('ConfigMap', 'loja-config', '', { sync: 'OutOfSync' }),
+  argoNode('ConfigMap', 'loja-feature-flags', '', { sync: 'OutOfSync', requiresPruning: true }),
+  argoNode('SealedSecret', 'loja-db', ''),
+  argoNode('Service', 'loja-api', ''),
+  argoNode('Deployment', 'loja-api', ''),
+  argoNode('Deployment', 'loja-worker', '', { health: 'Degraded', healthMessage: 'Deployment "loja-worker" exceeded its progress deadline', result: 'SyncFailed: Deployment.apps "loja-worker" is invalid: spec.template.spec.containers[0].image: Required value' }),
+  argoNode('CronJob', 'loja-relatorios', ''),
+  argoNode('Ingress', 'loja-api', '', { health: 'Progressing', healthMessage: 'aguardando o endereço do load balancer' }),
+  argoNode('HorizontalPodAutoscaler', 'loja-api', ''),
+  argoNode('ReplicaSet', 'loja-api-7d9f8b6c5', 'apps/Deployment/loja/loja-api', { info: ['rev 4', '2/2 prontos'] }),
+  argoNode('ReplicaSet', 'loja-api-6c5d8f7b9', 'apps/Deployment/loja/loja-api', { info: ['rev 3'], old: true, health: '' }),
+  argoNode('ReplicaSet', 'loja-worker-5c7b9d4f8', 'apps/Deployment/loja/loja-worker', { info: ['rev 2', '0/1 prontos'], health: 'Progressing' }),
+  argoNode('Pod', 'loja-api-7d9f8b6c5-2xkqp', RS + 'loja-api-7d9f8b6c5', { info: ['Running', '1/1 prontos', 'node-a'], images: ['ghcr.io/empresa/loja-api:1.8.2'] }),
+  argoNode('Pod', 'loja-api-7d9f8b6c5-h8mzt', RS + 'loja-api-7d9f8b6c5', { info: ['Running', '1/1 prontos', '1 reinícios', 'node-b'], images: ['ghcr.io/empresa/loja-api:1.8.2'] }),
+  argoNode('Pod', 'loja-worker-5c7b9d4f8-qq2lz', RS + 'loja-worker-5c7b9d4f8', { health: 'Degraded', healthMessage: 'back-off 5m0s restarting failed container', info: ['CrashLoopBackOff', '0/1 prontos', '14 reinícios', 'node-b'] }),
+  argoNode('Job', 'loja-relatorios-29844', 'batch/CronJob/loja/loja-relatorios', { info: ['concluído (1)'] }),
+  argoNode('Pod', 'loja-relatorios-29844-x7k2d', 'batch/Job/loja/loja-relatorios-29844', { info: ['Succeeded', '0/1 prontos', 'node-a'] }),
+];
+const argoHistory = [5, 4, 3, 2, 1].map((id, i) => ({
+  id,
+  revisions: [['9f2c4e1a7b3d5f6e8a0c1b2d3e4f5a6b7c8d9e0f', '3b1d9a0c', 'e47aa21f', '0c9d8e7f', 'a1b2c3d4'][i]],
+  sources: [{ repoUrl: GITOPS, path: 'apps/loja/api', chart: '', targetRevision: 'main', ref: '' }],
+  deployedAt: minutesAgo([12, 60 * 26, 60 * 24 * 3, 60 * 24 * 9, 60 * 24 * 30][i]),
+  startedAt: minutesAgo([12.2, 60 * 26 + 0.4, 60 * 24 * 3 + 1, 60 * 24 * 9 + 0.3, 60 * 24 * 30 + 0.2][i]),
+  initiatedBy: i % 2 ? '' : 'carlos',
+  automated: i % 2 === 1,
+}));
+
 export function installDevMock() {
   mockWindows('main');
   const params = new URLSearchParams(location.search);
@@ -216,7 +340,17 @@ export function installDevMock() {
           { group: 'cert-manager.io', version: 'v1', plural: 'clusterissuers', kind: 'ClusterIssuer', namespaced: false },
           { group: 'monitoring.coreos.com', version: 'v1', plural: 'servicemonitors', kind: 'ServiceMonitor', namespaced: true },
           { group: 'bitnami.com', version: 'v1alpha1', plural: 'sealedsecrets', kind: 'SealedSecret', namespaced: true },
+          { group: 'argoproj.io', version: 'v1alpha1', plural: 'applications', kind: 'Application', namespaced: true },
+          { group: 'argoproj.io', version: 'v1alpha1', plural: 'appprojects', kind: 'AppProject', namespaced: true },
         ];
+      case 'k8s_argo_apps':
+        return { apps: argoApps, projects: argoProjects, url: 'https://argocd.empresa.com' };
+      case 'k8s_argo_app': {
+        const app = argoApps.find((x) => x.name === a?.name) ?? argoApps[0];
+        return { app, nodes: app.name === 'loja-api' ? argoNodes : argoNodes.slice(3, 5).concat(argoNodes.slice(9, 14)), history: argoHistory };
+      }
+      case 'k8s_argo_action':
+        return null;
       case 'k8s_sealed':
         return {
           scope: 'strict',

@@ -45,7 +45,8 @@ Só a interface, no navegador (`npm run dev` e abrir http://localhost:1420): for
 `?dialog=host|newhost|credential|tunnel|palette|generate`, `?panel=host|sftp` (com `view=session`) e
 `?theme=light` abrem direto uma tela; `?update=1` simula uma versão nova. Na página Kubernetes
 (`view=kubernetes`), `?kind=crd:sealedsecrets.bitnami.com` escolhe o tipo e `?seal=new|edit|convert`
-abre o diálogo do Sealed Secrets.
+abre o diálogo do Sealed Secrets. `?argo=list|<app>` abre o Argo CD (`&tab=resources|history`,
+`&sync=1` abre o diálogo de sync).
 O mock fica fora do build de produção.
 
 ## Interface
@@ -162,6 +163,19 @@ O mock fica fora do build de produção.
   só o que mudou. Escopo (`strict`, `namespace-wide`, `cluster-wide`) e tipo do Secret são
   escolhidos no diálogo. Valores podem vir de arquivos (binários vão em base64). O resultado é
   aplicado no cluster ou copiado/salvo como YAML para o repositório.
+- **Argo CD**: com o Argo CD no cluster, **Applications** aparece no topo da barra. Os apps são
+  lidos direto da API do Kubernetes (os CRDs do `argoproj.io`), com as permissões do kubeconfig:
+  não precisa do argocd-server, de login nem de token, como no `argocd --core`. A lista mostra os
+  apps em cartões ou tabela, agrupados por projeto, com filtros de projeto, saúde e sync (com a
+  contagem de cada um) e busca por nome, repositório, namespace ou label. Num app: saúde, sync
+  (commit com link para o GitHub/GitLab/Bitbucket) e a última operação; a **árvore** de recursos
+  junta o que está no git com o que o cluster criou (ReplicaSets, Jobs e Pods), com a saúde e o
+  erro do último sync em cada um, e clicar num recurso abre o YAML com as ações de sempre (logs,
+  shell, port-forward…). Também a lista de recursos e o **histórico**. Ações: sincronizar (o app
+  ou só alguns recursos, com prune, simulação, server-side apply, replace e forçar), atualizar
+  (com ou sem cache), voltar para uma versão do histórico, encerrar a operação e ligar/desligar o
+  auto-sync, prune e self-heal. Apps que aplicam em outro cluster mostram só o que o Argo gerencia.
+  O diff entre o git e o cluster ainda não existe (depende do repo-server do Argo).
 
 ## Túneis
 

@@ -230,6 +230,129 @@ export interface SealRequest {
   adopt: boolean;
 }
 
+// ---------- Argo CD (`k8s_argo`) ----------
+
+export type ArgoHealth = 'Healthy' | 'Progressing' | 'Degraded' | 'Suspended' | 'Missing' | 'Unknown' | '';
+export type ArgoSync = 'Synced' | 'OutOfSync' | 'Unknown' | '';
+
+export interface ArgoSource {
+  repoUrl: string;
+  path: string;
+  chart: string;
+  targetRevision: string;
+  /** Multi-source: nome usado em `$ref`. */
+  ref: string;
+}
+
+export interface ArgoOperation {
+  /** Running, Terminating, Succeeded, Failed, Error. */
+  phase: string;
+  message: string;
+  startedAt: string;
+  finishedAt: string;
+  revision: string;
+  initiatedBy: string;
+  automated: boolean;
+  dryRun: boolean;
+}
+
+export interface ArgoApp {
+  name: string;
+  namespace: string;
+  project: string;
+  sources: ArgoSource[];
+  destServer: string;
+  destName: string;
+  destNamespace: string;
+  /** O destino é o cluster deste contexto (dá para ver os pods). */
+  inCluster: boolean;
+  sync: ArgoSync;
+  revisions: string[];
+  health: ArgoHealth;
+  healthMessage: string;
+  autoSync: boolean;
+  prune: boolean;
+  selfHeal: boolean;
+  operation: ArgoOperation | null;
+  /** Há uma operação pedida ou rodando. */
+  busy: boolean;
+  reconciledAt: string;
+  created: string;
+  labels: Record<string, string>;
+  conditions: { type: string; message: string; time: string }[];
+  counts: { total: number; outOfSync: number; degraded: number; progressing: number; missing: number };
+}
+
+export interface ArgoApps {
+  apps: ArgoApp[];
+  projects: { name: string; namespace: string; description: string }[];
+  /** Interface web do Argo CD ('' = não configurada). */
+  url: string;
+}
+
+export interface ArgoNode {
+  /** `grupo/Kind/namespace/nome`. */
+  id: string;
+  /** '' = direto no app. */
+  parent: string;
+  group: string;
+  version: string;
+  kind: string;
+  namespace: string;
+  name: string;
+  /** No git (gerenciado); os outros o cluster criou. */
+  managed: boolean;
+  sync: ArgoSync;
+  health: ArgoHealth;
+  healthMessage: string;
+  /** Resultado da última operação (quando não foi só "synced"). */
+  result: string;
+  hook: boolean;
+  requiresPruning: boolean;
+  info: string[];
+  images: string[];
+  created: string;
+  /** ReplicaSet de versão antiga. */
+  old: boolean;
+  /** Para abrir o YAML (null = tipo desconhecido). */
+  resource: Omit<KubeCustom, 'kind'> | null;
+}
+
+export interface ArgoHistory {
+  id: number;
+  revisions: string[];
+  sources: ArgoSource[];
+  deployedAt: string;
+  startedAt: string;
+  initiatedBy: string;
+  automated: boolean;
+}
+
+export interface ArgoDetail {
+  app: ArgoApp;
+  nodes: ArgoNode[];
+  /** O mais recente primeiro. */
+  history: ArgoHistory[];
+}
+
+export type ArgoTarget = { group: string; kind: string; namespace: string; name: string };
+export type ArgoAction =
+  | { type: 'refresh'; hard: boolean }
+  | {
+      type: 'sync';
+      prune: boolean;
+      dryRun: boolean;
+      force: boolean;
+      applyOutOfSyncOnly: boolean;
+      serverSide: boolean;
+      replace: boolean;
+      /** Vazio = o app inteiro. */
+      resources: ArgoTarget[];
+    }
+  | { type: 'rollback'; id: number; prune: boolean }
+  | { type: 'terminate' }
+  | { type: 'autoSync'; enabled: boolean; prune: boolean; selfHeal: boolean };
+
 export type KubeAction = { type: 'delete' } | { type: 'scale'; replicas: number } | { type: 'restart' };
 export type KubeTermMode = { type: 'logs'; previous: boolean } | { type: 'shell' };
 
@@ -452,6 +575,12 @@ export const backend = {
   /** Sela com o certificado do controller; devolve o YAML (e grava em `file`, se houver). */
   k8sSeal: (kubeconfig: string, context: string, request: SealRequest, file: string | null) =>
     invoke<string>('k8s_seal', { kubeconfig, context, request, file }),
+
+  k8sArgoApps: (kubeconfig: string, context: string) => invoke<ArgoApps>('k8s_argo_apps', { kubeconfig, context }),
+  k8sArgoApp: (kubeconfig: string, context: string, namespace: string, name: string) =>
+    invoke<ArgoDetail>('k8s_argo_app', { kubeconfig, context, namespace, name }),
+  k8sArgoAction: (kubeconfig: string, context: string, namespace: string, name: string, action: ArgoAction) =>
+    invoke<void>('k8s_argo_action', { kubeconfig, context, namespace, name, action }),
 
   k8sAction: (kubeconfig: string, context: string, kind: KubeResource, namespace: string, name: string, action: KubeAction) =>
     invoke<void>('k8s_action', { kubeconfig, context, kind, namespace: namespace || null, name, action }),
