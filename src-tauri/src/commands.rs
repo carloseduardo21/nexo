@@ -16,6 +16,7 @@ use crate::docker;
 use crate::hostinfo;
 use crate::k8s::{self, Kube};
 use crate::k8s_forward;
+use crate::k8s_seal;
 use crate::k8s_term;
 use crate::local;
 use crate::rdp;
@@ -757,4 +758,30 @@ pub async fn k8s_metrics(
 pub async fn k8s_custom_resources(kube: State<'_, Kube>, kubeconfig: Option<String>, context: String) -> Result<Vec<k8s::CustomInfo>, String> {
     let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
     k8s::custom_resources(&client).await
+}
+
+/// Um SealedSecret aberto para editar (com os valores atuais, se der para ler o Secret).
+#[tauri::command]
+pub async fn k8s_sealed(kube: State<'_, Kube>, kubeconfig: Option<String>, context: String, namespace: String, name: String) -> Result<k8s_seal::Sealed, String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    k8s_seal::sealed(&client, &namespace, &name).await
+}
+
+/// Os valores de um Secret comum, para selá-lo.
+#[tauri::command]
+pub async fn k8s_secret_plain(kube: State<'_, Kube>, kubeconfig: Option<String>, context: String, namespace: String, name: String) -> Result<k8s_seal::Plain, String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    k8s_seal::plain(&client, &namespace, &name).await
+}
+
+/// Sela com o certificado do controller do cluster e devolve o YAML do SealedSecret (salvo no
+/// cluster se `apply`). `file`: grava também o YAML nesse arquivo (escolhido no diálogo).
+#[tauri::command]
+pub async fn k8s_seal(kube: State<'_, Kube>, kubeconfig: Option<String>, context: String, request: k8s_seal::Request, file: Option<String>) -> Result<String, String> {
+    let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
+    let yaml = k8s_seal::save(&client, &request).await?;
+    if let Some(path) = file {
+        tokio::fs::write(&path, &yaml).await.map_err(|e| format!("{path}: {e}"))?;
+    }
+    Ok(yaml)
 }

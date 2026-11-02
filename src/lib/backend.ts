@@ -194,6 +194,42 @@ export interface KubeTable {
   truncated: boolean;
 }
 
+/** Sealed Secrets: em que nomes o valor selado abre (`k8s_seal::Scope`). */
+export type SealScope = 'strict' | 'namespaceWide' | 'clusterWide';
+
+/** Um valor do Secret. `value` null: lido = desconhecido; ao salvar = manter o selado atual. */
+export interface SealEntry {
+  key: string;
+  value: string | null;
+  /** O valor é base64 (conteúdo binário). */
+  base64: boolean;
+}
+
+export interface KubeSealed {
+  scope: SealScope;
+  type: string;
+  entries: SealEntry[];
+  /** Por que os valores atuais não vieram ('' = vieram do Secret). */
+  valuesError: string;
+  /** O controller não conseguiu abrir ('' = ok). */
+  status: string;
+  resourceVersion: string;
+}
+
+export interface SealRequest {
+  namespace: string;
+  name: string;
+  scope: SealScope;
+  type: string;
+  entries: SealEntry[];
+  /** Editando: o resourceVersion de quando abriu (null = criar). */
+  resourceVersion: string | null;
+  /** Salvar no cluster (senão só devolve o YAML). */
+  apply: boolean;
+  /** Criando com o nome de um Secret que já existe: o controller assume o Secret. */
+  adopt: boolean;
+}
+
 export type KubeAction = { type: 'delete' } | { type: 'scale'; replicas: number } | { type: 'restart' };
 export type KubeTermMode = { type: 'logs'; previous: boolean } | { type: 'shell' };
 
@@ -409,6 +445,13 @@ export const backend = {
   k8sMetrics: (kubeconfig: string, context: string, nodes: boolean, namespace: string) =>
     invoke<Record<string, KubeUsage>>('k8s_metrics', { kubeconfig, context, nodes, namespace: namespace || null }),
   k8sCustomResources: (kubeconfig: string, context: string) => invoke<KubeCustom[]>('k8s_custom_resources', { kubeconfig, context }),
+  k8sSealed: (kubeconfig: string, context: string, namespace: string, name: string) =>
+    invoke<KubeSealed>('k8s_sealed', { kubeconfig, context, namespace, name }),
+  k8sSecretPlain: (kubeconfig: string, context: string, namespace: string, name: string) =>
+    invoke<{ type: string; entries: SealEntry[] }>('k8s_secret_plain', { kubeconfig, context, namespace, name }),
+  /** Sela com o certificado do controller; devolve o YAML (e grava em `file`, se houver). */
+  k8sSeal: (kubeconfig: string, context: string, request: SealRequest, file: string | null) =>
+    invoke<string>('k8s_seal', { kubeconfig, context, request, file }),
 
   k8sAction: (kubeconfig: string, context: string, kind: KubeResource, namespace: string, name: string, action: KubeAction) =>
     invoke<void>('k8s_action', { kubeconfig, context, kind, namespace: namespace || null, name, action }),

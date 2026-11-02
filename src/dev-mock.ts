@@ -122,6 +122,15 @@ const kubeTables: Record<string, { columns: ReturnType<typeof col>[]; rows: Retu
     ],
   },
 };
+kubeTables.sealedsecrets = {
+  columns: [col('Name'), col('Status'), col('Synced'), col('Age')],
+  rows: [
+    kubeRow('loja', ['loja-db', '', 'True', '12d']),
+    kubeRow('loja', ['loja-registry', '', 'True', '30d']),
+    kubeRow('monitoring', ['grafana-admin', 'no key could decrypt secret (admin-password)', 'False', '2h']),
+  ],
+};
+
 const kubeYaml = `apiVersion: v1
 kind: Pod
 metadata:
@@ -151,7 +160,8 @@ status:
   startTime: "2026-10-25T14:02:11Z"
 `;
 
-function kubeList(kind: string, namespace: string | null) {
+function kubeList(resource: string | { plural: string }, namespace: string | null) {
+  const kind = typeof resource === 'string' ? resource : resource.plural;
   const table = kubeTables[kind] ?? { columns: [col('Name'), col('Age')], rows: [kubeRow('loja', [`exemplo-${kind.toLowerCase()}`, '3d'])] };
   return { ...table, rows: table.rows.filter((r) => !namespace || !r.namespace || r.namespace === namespace), truncated: false };
 }
@@ -205,7 +215,25 @@ export function installDevMock() {
           { group: 'cert-manager.io', version: 'v1', plural: 'certificates', kind: 'Certificate', namespaced: true },
           { group: 'cert-manager.io', version: 'v1', plural: 'clusterissuers', kind: 'ClusterIssuer', namespaced: false },
           { group: 'monitoring.coreos.com', version: 'v1', plural: 'servicemonitors', kind: 'ServiceMonitor', namespaced: true },
+          { group: 'bitnami.com', version: 'v1alpha1', plural: 'sealedsecrets', kind: 'SealedSecret', namespaced: true },
         ];
+      case 'k8s_sealed':
+        return {
+          scope: 'strict',
+          type: 'Opaque',
+          entries: [
+            { key: 'DB_USER', value: 'loja', base64: false },
+            { key: 'DB_PASSWORD', value: 'c0rr3t0-h0rse', base64: false },
+            { key: 'ca.crt', value: null, base64: false },
+          ],
+          valuesError: '',
+          status: '',
+          resourceVersion: '4182',
+        };
+      case 'k8s_secret_plain':
+        return { type: 'Opaque', entries: [{ key: 'token', value: 'ghp_exemplo', base64: false }] };
+      case 'k8s_seal':
+        return 'apiVersion: bitnami.com/v1alpha1\nkind: SealedSecret\n';
       case 'k8s_metrics':
         return Object.fromEntries(
           kubeTables[a?.nodes ? 'node' : 'pod'].rows.map((r, i) => [r.namespace ? `${r.namespace}/${r.name}` : r.name, { cpu: 12 + i * 37, memory: (48 + i * 90) * 1024 ** 2 }]),

@@ -5,7 +5,7 @@ import App from './App.svelte';
 import { app as state, connectHost, openDialog, showView, type View } from './lib/state.svelte';
 import { side, type SidePanel } from './lib/side.svelte';
 import { hostinfo } from './lib/hostinfo.svelte';
-import { forwards, openDetail } from './lib/k8s.svelte';
+import { forwards, openDetail, openSeal, selectKind, type KindKey } from './lib/k8s.svelte';
 
 // Fora do Tauri (navegador comum, só em dev): backend simulado para ver a interface.
 const mocked = import.meta.env.DEV && !('__TAURI_INTERNALS__' in window);
@@ -37,6 +37,16 @@ if (mocked) {
   // `?forward=<nome>`: diálogo de port-forward de um service.
   const forward = params.get('forward');
   if (forward) setTimeout(() => (forwards.dialog = { kind: 'service', namespace: 'loja', name: forward }), 500);
+  // `?kind=<tipo>`: tipo escolhido na página Kubernetes (ex.: `crd:sealedsecrets.bitnami.com`).
+  const kind = params.get('kind');
+  if (kind) setTimeout(() => selectKind(kind as KindKey), 400);
+  // `?seal=new|edit|convert`: diálogo do Sealed Secrets.
+  const sealMode = params.get('seal');
+  if (sealMode)
+    setTimeout(
+      () => openSeal(sealMode === 'new' ? { mode: 'new', namespace: 'loja' } : { mode: sealMode as 'edit' | 'convert', namespace: 'loja', name: 'loja-db' }),
+      600,
+    );
   // `?dialog=host|newhost|credential|tunnel|palette|generate` abre um diálogo (depois de carregar os dados).
   const dialog = params.get('dialog');
   if (dialog) {

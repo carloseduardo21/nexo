@@ -10,7 +10,8 @@
   import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
   import PencilIcon from '@lucide/svelte/icons/pencil';
-  import { actionsFor, k8s, kindInfo, loadYaml, openPodTerminal, saveYaml, toggleReveal } from '../lib/k8s.svelte';
+  import KeyRoundIcon from '@lucide/svelte/icons/key-round';
+  import { SEALED, actionsFor, hasSealed, k8s, kindInfo, loadYaml, openPodTerminal, openSeal, saveYaml, toggleReveal } from '../lib/k8s.svelte';
   import { copyText } from '../lib/actions.svelte';
 
   const detail = $derived(k8s.detail!);
@@ -107,6 +108,15 @@
       </Button>
       <Button variant="ghost" size="icon-sm" title="Shell" onclick={() => openPodTerminal(detail.namespace, detail.name, { type: 'shell' })}>
         <SquareTerminalIcon />
+      </Button>
+    {/if}
+    {#if detail.kind === SEALED}
+      <Button variant="ghost" size="icon-sm" title="Editar valores" onclick={() => openSeal({ mode: 'edit', namespace: detail.namespace, name: detail.name })}>
+        <KeyRoundIcon />
+      </Button>
+    {:else if secret && hasSealed()}
+      <Button variant="ghost" size="icon-sm" title="Selar (criar um SealedSecret com estes valores)" onclick={() => openSeal({ mode: 'convert', namespace: detail.namespace, name: detail.name })}>
+        <KeyRoundIcon />
       </Button>
     {/if}
     {#if secret}

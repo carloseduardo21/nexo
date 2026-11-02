@@ -4,6 +4,7 @@ mod flow;
 mod hostinfo;
 mod k8s;
 mod k8s_forward;
+mod k8s_seal;
 mod k8s_term;
 mod keyhook;
 mod local;
@@ -81,6 +82,9 @@ pub fn run() {
             commands::k8s_apply,
             commands::k8s_metrics,
             commands::k8s_custom_resources,
+            commands::k8s_sealed,
+            commands::k8s_secret_plain,
+            commands::k8s_seal,
             commands::sftp_home,
             commands::sftp_list,
             commands::sftp_mkdir,

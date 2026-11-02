@@ -28,7 +28,7 @@ keyring = "4.2.0"
 chacha20poly1305 = "0.11.0"
 uuid = { version = "1.29.0", features = ["v4"] }
 sha2 = "0.10"
-x509-cert = { version = "0.3", default-features = false, features = ["std"] }
+x509-cert = { version = "0.3", default-features = false, features = ["std", "pem"] }
 # RDP (IronRDP). Mesmo conjunto de versões em todas as crates: elas compartilham tipos.
 ironrdp-connector = "0.11"
 ironrdp-session = "0.12"
@@ -50,6 +50,11 @@ futures = "0.3"
 k8s-openapi = { version = "0.28", features = ["latest"] }
 http = "1"
 serde-saphyr = "0.0.29"
+# Sealed Secrets: as mesmas versões que o russh já usa (RSA-OAEP; AES-GCM pelo ring).
+rsa = { version = "0.10.0-rc.18", default-features = false, features = ["std", "encoding", "sha2"] }
+ring = "0.17"
+getrandom = { version = "0.4", features = ["sys_rng"] }
+base64 = "0.22"
 tauri-plugin-updater = "2.14.0"
 tauri-plugin-process = "2.4.0"
 

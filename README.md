@@ -43,7 +43,9 @@ quando o rascunho é publicado.
 Só a interface, no navegador (`npm run dev` e abrir http://localhost:1420): fora do Tauri, o
 `src/dev-mock.ts` simula o backend com dados de exemplo. `?view=credentials|tunnels|settings|session`,
 `?dialog=host|newhost|credential|tunnel|palette|generate`, `?panel=host|sftp` (com `view=session`) e
-`?theme=light` abrem direto uma tela; `?update=1` simula uma versão nova.
+`?theme=light` abrem direto uma tela; `?update=1` simula uma versão nova. Na página Kubernetes
+(`view=kubernetes`), `?kind=crd:sealedsecrets.bitnami.com` escolhe o tipo e `?seal=new|edit|convert`
+abre o diálogo do Sealed Secrets.
 O mock fica fora do build de produção.
 
 ## Interface
@@ -151,6 +153,15 @@ O mock fica fora do build de produção.
   aparecem como sugestão) e a local; fica em `127.0.0.1` enquanto o Nexo estiver aberto, listado na
   barra da página (clique abre no navegador). Se o pod for trocado (rollout), o próximo acesso
   escolhe outro pelo seletor.
+- **Sealed Secrets** (bitnami-labs/sealed-secrets): com o controller no cluster, aparecem junto dos
+  Secrets. O botão **+ Sealed Secret** cria um novo; **Editar valores** abre um existente com os
+  valores atuais (lidos do Secret que o controller criou), e **Selar…** num Secret comum converte
+  ele num SealedSecret, que passa a gerenciar o Secret. A selagem é feita pelo próprio Nexo com o
+  certificado do controller do contexto (o mesmo formato do `kubeseal`, que não precisa estar
+  instalado). Valores não alterados continuam com o mesmo texto selado, então o diff no git mostra
+  só o que mudou. Escopo (`strict`, `namespace-wide`, `cluster-wide`) e tipo do Secret são
+  escolhidos no diálogo. Valores podem vir de arquivos (binários vão em base64). O resultado é
+  aplicado no cluster ou copiado/salvo como YAML para o repositório.
 
 ## Túneis
 

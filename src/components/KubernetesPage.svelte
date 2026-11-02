@@ -15,11 +15,18 @@
   import Picker from './Picker.svelte';
   import KubeDetail from './KubeDetail.svelte';
   import KubeForwardDialog from './KubeForwardDialog.svelte';
+  import KubeSealDialog from './KubeSealDialog.svelte';
+  import PlusIcon from '@lucide/svelte/icons/plus';
   import XIcon from '@lucide/svelte/icons/x';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
   import {
-    KIND_GROUPS,
+    SEALED,
+    defaultNamespace,
+    hasSealed,
+    kindGroups,
+    openSeal,
+    seal,
     customKey,
     listKey,
     actionsFor,
@@ -48,7 +55,7 @@
   let openGroups = $state<Record<string, boolean>>({});
   const customGroups = $derived.by(() => {
     const map = new Map<string, KubeCustom[]>();
-    for (const c of k8s.customs) map.set(c.group, [...(map.get(c.group) ?? []), c]);
+    for (const c of k8s.customs.filter((c) => customKey(c) !== SEALED)) map.set(c.group, [...(map.get(c.group) ?? []), c]);
     return [...map];
   });
   let sort = $state<{ column: number; desc: boolean } | null>(null);
@@ -124,6 +131,8 @@
       const [a, b] = value.split('/');
       return a === b || row.cells.includes('Completed') ? '' : 'text-amber-600 dark:text-amber-400';
     }
+    // Sealed Secrets: o controller não conseguiu abrir.
+    if (column === 'Synced') return value === 'False' ? 'text-destructive' : '';
     if (!['Status', 'Phase', 'Type'].includes(column)) return '';
     if (BAD.test(value)) return 'text-destructive';
     if (WARN.test(value)) return 'text-amber-600 dark:text-amber-400';
@@ -250,7 +259,7 @@
       </div>
 
       <nav class="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {#each KIND_GROUPS as group (group.label)}
+        {#each kindGroups() as group (group.label)}
           <div class="mt-2 mb-0.5 px-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{group.label}</div>
           {#each group.kinds as item (item.kind)}
             <button
@@ -264,7 +273,7 @@
           {/each}
         {/each}
 
-        {#if k8s.customs.length}
+        {#if customGroups.length}
           <div class="mt-2 mb-0.5 px-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Custom resources</div>
           {#each customGroups as [group, list] (group)}
             {@const open = openGroups[group] ?? list.some((c) => customKey(c) === k8s.kind)}
@@ -332,6 +341,11 @@
           <SearchIcon class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input bind:value={query} placeholder="Filtrar" class="h-8 pl-8 text-sm" spellcheck={false} />
         </div>
+        {#if (k8s.kind === SEALED || k8s.kind === 'secret') && hasSealed()}
+          <Button variant="outline" size="sm" title="Novo SealedSecret, selado com o certificado do controller" onclick={() => openSeal({ mode: 'new', namespace: defaultNamespace() })}>
+            <PlusIcon />Sealed Secret
+          </Button>
+        {/if}
         <Button
           variant={k8s.wide ? 'secondary' : 'ghost'}
           size="icon-sm"
@@ -451,4 +465,7 @@
 {/if}
 {#if forwards.dialog}
   <KubeForwardDialog />
+{/if}
+{#if seal.dialog}
+  <KubeSealDialog />
 {/if}

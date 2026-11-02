@@ -59,9 +59,23 @@ const BUILTIN = KIND_GROUPS.flatMap((g) => g.kinds);
 export const customKey = (c: KubeCustom): KindKey => `crd:${c.plural}.${c.group}`;
 const customOf = (key: KindKey) => k8s.customs.find((c) => customKey(c) === key);
 
+/** Sealed Secrets (bitnami-labs): fica junto dos Secrets quando o cluster tem o CRD. */
+export const SEALED: KindKey = 'crd:sealedsecrets.bitnami.com';
+export const hasSealed = () => k8s.customs.some((c) => customKey(c) === SEALED);
+
+/** Os grupos da barra lateral (com o Sealed Secrets, se o cluster tiver). */
+export function kindGroups() {
+  if (!hasSealed()) return KIND_GROUPS;
+  return KIND_GROUPS.map((g) => {
+    const at = g.kinds.findIndex((k) => k.kind === 'secret');
+    return at < 0 ? g : { ...g, kinds: [...g.kinds.slice(0, at + 1), kindInfo(SEALED), ...g.kinds.slice(at + 1)] };
+  });
+}
+
 export function kindInfo(key: KindKey): KindInfo {
   const builtin = BUILTIN.find((i) => i.kind === key);
   if (builtin) return builtin;
+  if (key === SEALED) return { kind: key, label: 'Sealed Secrets', namespaced: true };
   const custom = customOf(key);
   return { kind: key, label: custom?.kind ?? key.slice(4), namespaced: custom?.namespaced ?? true };
 }
@@ -392,6 +406,22 @@ export async function stopForward(id: number) {
   await loadForwards();
 }
 
+// ---------- Sealed Secrets ----------
+
+/** Criar, editar os valores de um SealedSecret ou selar um Secret comum. */
+export type SealTarget = { mode: 'new'; namespace: string } | { mode: 'edit' | 'convert'; namespace: string; name: string };
+
+export const seal = $state({ dialog: null as SealTarget | null });
+
+export function openSeal(target: SealTarget) {
+  seal.dialog = target;
+}
+
+/** Namespace sugerido para um novo: o escolhido, o do contexto ou `default`. */
+export function defaultNamespace() {
+  return k8s.namespace || k8s.config?.contexts.find((c) => c.name === k8s.context)?.namespace || 'default';
+}
+
 export type MenuItem = { label: string; run: () => void; destructive?: boolean } | null;
 
 /** Ações de um item (menu da linha e do painel de YAML). `desired`: réplicas atuais. */
@@ -409,6 +439,8 @@ export function actionsFor(kind: KindKey, namespace: string, name: string, opts:
     }
     items.push(null);
   }
+  if (kind === SEALED) items.push({ label: 'Editar valores…', run: () => openSeal({ mode: 'edit', namespace, name }) }, null);
+  if (kind === 'secret' && hasSealed()) items.push({ label: 'Selar…', run: () => openSeal({ mode: 'convert', namespace, name }) }, null);
   if (canForward(kind)) items.push({ label: 'Port-forward…', run: () => (forwards.dialog = { kind, namespace, name }) });
   if (canScale(kind)) items.push({ label: 'Escalar…', run: () => void runAction(kind, namespace, name, 'scale', opts.desired) });
   if (canRestart(kind)) items.push({ label: 'Reiniciar', run: () => void runAction(kind, namespace, name, 'restart') });

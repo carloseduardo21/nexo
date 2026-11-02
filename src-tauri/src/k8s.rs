@@ -423,7 +423,7 @@ fn edited(resource: &Resource, namespace: Option<&str>, name: &str, text: &str) 
 
 pub const HIDDEN: &str = "••••••••";
 
-fn to_yaml(object: &mut Value, hide: bool) -> Result<String, String> {
+pub(crate) fn to_yaml(object: &mut Value, hide: bool) -> Result<String, String> {
     if let Some(meta) = object.get_mut("metadata").and_then(Value::as_object_mut) {
         meta.remove("managedFields");
         // O `kubectl apply` guarda o objeto inteiro aqui (com os valores do Secret em claro).
@@ -645,7 +645,7 @@ fn label_selector(labels: &Value) -> Option<String> {
 }
 
 /// Percent-encoding para um valor de query string.
-fn encode(text: &str) -> String {
+pub(crate) fn encode(text: &str) -> String {
     text.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),
