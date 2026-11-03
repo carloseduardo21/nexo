@@ -54,7 +54,7 @@ serde-saphyr = "0.0.29"
 rsa = { version = "0.10.0-rc.18", default-features = false, features = ["std", "encoding", "sha2"] }
 ring = "0.17"
 getrandom = { version = "0.4", features = ["sys_rng"] }
-base64 = "0.22"
+base64 = "0.23"
 tauri-plugin-updater = "2.14.0"
 tauri-plugin-process = "2.4.0"
 
