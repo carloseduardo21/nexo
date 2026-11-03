@@ -52,6 +52,12 @@ jobs:
 
           Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/) — see the [code signing policy](https://github.com/${{ github.repository }}#política-de-assinatura-de-código-code-signing-policy)."
           fi
+          # Os jobs seguintes enviam com --clobber: numa release já publicada, isso trocaria os
+          # instaladores que os usuários baixam (ex.: execução manual com a versão antiga no conf).
+          if [ "$(gh release view "$TAG" --json isDraft -q .isDraft 2>/dev/null)" = false ]; then
+            echo "::error::A release $TAG já está publicada; suba a versão antes de gerar outra."
+            exit 1
+          fi
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --target "$GITHUB_SHA" \
             --title "Nexo $TAG" --notes "$notes"
 
