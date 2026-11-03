@@ -235,11 +235,14 @@
 {:else}
   <div class="flex h-full">
     <aside class="flex w-56 shrink-0 flex-col border-r bg-sidebar">
-      <div class="grid gap-1.5 p-2">
+      <!-- grid-cols-1 = minmax(0, 1fr): sem isso a coluna cresce até caber a URL inteira do cluster. -->
+      <div class="grid grid-cols-1 gap-1.5 p-2">
         <Picker items={contextItems} value={k8s.context} onSelect={selectContext} placeholder="Buscar contexto" empty="Nenhum contexto.">
           {#snippet trigger()}
             <span class="block truncate text-[13px] font-medium">{k8s.context || 'Contexto'}</span>
-            <span class="block truncate text-[11px] text-muted-foreground">{context?.server || context?.cluster}</span>
+            <span class="block truncate text-[11px] text-muted-foreground" title={context?.server || context?.cluster}>
+              {context?.server || context?.cluster}
+            </span>
           {/snippet}
         </Picker>
         <Picker

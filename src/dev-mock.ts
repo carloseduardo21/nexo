@@ -85,7 +85,7 @@ const kubeContexts = {
   source: 'C:\\Users\\carlos\\.kube\\config',
   current: 'prod-sa-east-1',
   contexts: [
-    { name: 'prod-sa-east-1', cluster: 'prod', user: 'carlos', namespace: '', server: 'https://k8s.empresa.com:6443' },
+    { name: 'prod-sa-east-1', cluster: 'prod', user: 'carlos', namespace: '', server: 'https://prod-sa-east-1-dns-4f8a2c1e.hcp.brazilsouth.azmk8s.io:443' },
     { name: 'kind-treino', cluster: 'kind-treino', user: 'kind-treino', namespace: '', server: 'https://127.0.0.1:38927' },
   ],
 };
