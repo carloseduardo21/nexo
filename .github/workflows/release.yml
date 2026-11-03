@@ -52,6 +52,12 @@ jobs:
 
           Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/) — see the [code signing policy](https://github.com/${{ github.repository }}#política-de-assinatura-de-código-code-signing-policy)."
           fi
+          # Os jobs seguintes enviam com --clobber: numa release já publicada, isso trocaria os
+          # instaladores que os usuários baixam (ex.: execução manual com a versão antiga no conf).
+          if [ "$(gh release view "$TAG" --json isDraft -q .isDraft 2>/dev/null)" = false ]; then
+            echo "::error::A release $TAG já está publicada; suba a versão antes de gerar outra."
+            exit 1
+          fi
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --target "$GITHUB_SHA" \
             --title "Nexo $TAG" --notes "$notes"
 
@@ -231,8 +237,11 @@ jobs:
         run: |
           gh release download "$TAG" -R "$GITHUB_REPOSITORY" --pattern '*.sig' --dir sigs || true
           if ! ls sigs/*.sig >/dev/null 2>&1; then
-            echo "::warning::Sem assinaturas do updater (segredo TAURI_SIGNING_PRIVATE_KEY ausente): latest.json não gerado."
-            exit 0
+            # Numa tag, isto é erro: sem latest.json o "Verificar agora" do app dá "Could not fetch a
+            # valid release JSON" para todo mundo (foi o que aconteceu na v0.3.0 e na v0.4.0).
+            level=$([ "$GITHUB_REF_TYPE" = tag ] && echo error || echo warning)
+            echo "::$level::Sem assinaturas do updater (segredo TAURI_SIGNING_PRIVATE_KEY ausente): latest.json não gerado."
+            [ "$level" = warning ] && exit 0 || exit 1
           fi
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
           entry() {
