@@ -231,8 +231,11 @@ jobs:
         run: |
           gh release download "$TAG" -R "$GITHUB_REPOSITORY" --pattern '*.sig' --dir sigs || true
           if ! ls sigs/*.sig >/dev/null 2>&1; then
-            echo "::warning::Sem assinaturas do updater (segredo TAURI_SIGNING_PRIVATE_KEY ausente): latest.json não gerado."
-            exit 0
+            # Numa tag, isto é erro: sem latest.json o "Verificar agora" do app dá "Could not fetch a
+            # valid release JSON" para todo mundo (foi o que aconteceu na v0.3.0 e na v0.4.0).
+            level=$([ "$GITHUB_REF_TYPE" = tag ] && echo error || echo warning)
+            echo "::$level::Sem assinaturas do updater (segredo TAURI_SIGNING_PRIVATE_KEY ausente): latest.json não gerado."
+            [ "$level" = warning ] && exit 0 || exit 1
           fi
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
           entry() {
