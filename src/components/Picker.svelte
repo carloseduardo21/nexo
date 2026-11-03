@@ -50,7 +50,7 @@
       <button
         {...props}
         class={cn(
-          'flex w-full items-center gap-2 rounded-md border border-input bg-background px-2 py-1.5 text-left text-sm hover:bg-accent dark:bg-input/30 dark:hover:bg-input/50',
+          'flex w-full min-w-0 items-center gap-2 rounded-md border border-input bg-background px-2 py-1.5 text-left text-sm hover:bg-accent dark:bg-input/30 dark:hover:bg-input/50',
           className,
         )}>
         <span class="min-w-0 flex-1">{@render trigger()}</span>
