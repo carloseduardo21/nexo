@@ -1,6 +1,12 @@
 # PRs semanais de atualização. Versões menores e patches vêm agrupados num PR por ecossistema;
 # as maiores vêm uma a uma. As crates e os pacotes npm do Tauri precisam andar juntos (a CLI
-# confere se as versões batem), então ficam num grupo próprio dos dois lados.
+# confere se as versões batem), então ficam num grupo próprio dos dois lados. O mesmo vale para
+# as crates do IronRDP (dependem umas das outras) e para kube + k8s-openapi.
+#
+# O Dependabot considera um grupo com `update-types` mais específico que um grupo só com
+# `patterns`, e manda a dependência para ele. Por isso o `minor-and-patch` exclui as famílias
+# acima: sem isso, um bump 0.x → 0.(x+1) (major em semver 0.x) saía fora de qualquer grupo,
+# um PR por crate, e nenhum compilava sozinho.
 version: 2
 updates:
   - package-ecosystem: cargo
@@ -19,6 +25,7 @@ updates:
         patterns: ["kube", "kube-*", "k8s-openapi"]
       minor-and-patch:
         update-types: [minor, patch]
+        exclude-patterns: ["tauri", "tauri-*", "ironrdp-*", "kube", "kube-*", "k8s-openapi"]
 
   - package-ecosystem: npm
     directory: /
@@ -32,6 +39,11 @@ updates:
         patterns: ["@tauri-apps/*"]
       minor-and-patch:
         update-types: [minor, patch]
+        exclude-patterns: ["@tauri-apps/*"]
+    ignore:
+      # svelte-check 4.x só aceita typescript ^5 || ^6. Tirar quando ele suportar o 7.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
