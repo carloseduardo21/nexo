@@ -60,7 +60,15 @@ pub struct RdpSettings {
 
 impl Default for RdpSettings {
     fn default() -> Self {
-        Self { domain: String::new(), width: 0, height: 0, hidpi: false, clipboard: true, capture_keys: true, gfx: true }
+        Self {
+            domain: String::new(),
+            width: 0,
+            height: 0,
+            hidpi: false,
+            clipboard: true,
+            capture_keys: true,
+            gfx: true,
+        }
     }
 }
 
@@ -219,7 +227,11 @@ impl Vault {
             .iter()
             .map(|h| {
                 let (_, secret) = effective(&data, h);
-                HostView { host: h.clone(), has_password: secret.password.is_some(), has_passphrase: secret.passphrase.is_some() }
+                HostView {
+                    host: h.clone(),
+                    has_password: secret.password.is_some(),
+                    has_passphrase: secret.passphrase.is_some(),
+                }
             })
             .collect()
     }
@@ -280,7 +292,11 @@ impl Vault {
                 host.username = credential.username.clone();
             }
             if host.protocol == Protocol::Ssh {
-                host.auth = if credential.auth == AuthMethod::Key && credential.key_path.is_empty() { AuthMethod::Password } else { credential.auth.clone() };
+                host.auth = if credential.auth == AuthMethod::Key && credential.key_path.is_empty() {
+                    AuthMethod::Password
+                } else {
+                    credential.auth.clone()
+                };
                 host.key_path = credential.key_path.clone();
             }
         }
@@ -297,8 +313,12 @@ impl Vault {
         key.set_comment(format!("{username}@nexo"));
         let pem = key.to_openssh(russh::keys::ssh_key::LineEnding::LF).map_err(|e| e.to_string())?;
         let credential = Credential { label, username, auth: AuthMethod::Key, ..Default::default() };
-        let saved = self.save_credential(credential, SecretUpdate { private_key: Some(pem.to_string()), ..Default::default() })?;
-        self.credentials().into_iter().find(|c| c.credential.id == saved.id).ok_or_else(|| "credencial não encontrada".into())
+        let saved = self
+            .save_credential(credential, SecretUpdate { private_key: Some(pem.to_string()), ..Default::default() })?;
+        self.credentials()
+            .into_iter()
+            .find(|c| c.credential.id == saved.id)
+            .ok_or_else(|| "credencial não encontrada".into())
     }
 
     /// Caminho até o host: os jump hosts (do primeiro ao último) e o próprio host.
@@ -307,7 +327,12 @@ impl Vault {
     }
 
     /// `password`/`passphrase`: None mantém o valor salvo, Some("") apaga, Some(x) troca.
-    pub fn save_host(&self, mut host: Host, password: Option<String>, passphrase: Option<String>) -> Result<Host, String> {
+    pub fn save_host(
+        &self,
+        mut host: Host,
+        password: Option<String>,
+        passphrase: Option<String>,
+    ) -> Result<Host, String> {
         let mut data = self.data.lock().unwrap();
         if host.id.is_empty() {
             host.id = uuid::Uuid::new_v4().to_string();
@@ -347,7 +372,9 @@ impl Vault {
         let owner = data
             .hosts
             .iter()
-            .find(|h| h.id == id && !h.credential_id.is_empty() && data.credentials.iter().any(|c| c.id == h.credential_id))
+            .find(|h| {
+                h.id == id && !h.credential_id.is_empty() && data.credentials.iter().any(|c| c.id == h.credential_id)
+            })
             .map_or_else(|| id.to_string(), |h| h.credential_id.clone());
         update(data.secrets.entry(owner).or_default());
         self.persist(&data)
@@ -362,9 +389,13 @@ impl Vault {
 
     pub fn delete_host(&self, id: &str) -> Result<(), String> {
         let mut data = self.data.lock().unwrap();
-        let dependents: Vec<&str> = data.hosts.iter().filter(|h| h.jump_host_id == id).map(|h| h.label.as_str()).collect();
+        let dependents: Vec<&str> =
+            data.hosts.iter().filter(|h| h.jump_host_id == id).map(|h| h.label.as_str()).collect();
         if !dependents.is_empty() {
-            return Err(format!("este host é o jump host de: {}. Troque o jump host deles antes de excluir.", dependents.join(", ")));
+            return Err(format!(
+                "este host é o jump host de: {}. Troque o jump host deles antes de excluir.",
+                dependents.join(", ")
+            ));
         }
         data.hosts.retain(|h| h.id != id);
         data.secrets.remove(id);
@@ -375,7 +406,12 @@ impl Vault {
     /// Hosts, credenciais (sem segredos) e túneis, para exportar.
     pub fn export(&self) -> Export {
         let data = self.data.lock().unwrap();
-        Export { version: 1, hosts: data.hosts.clone(), credentials: data.credentials.clone(), tunnels: data.tunnels.clone() }
+        Export {
+            version: 1,
+            hosts: data.hosts.clone(),
+            credentials: data.credentials.clone(),
+            tunnels: data.tunnels.clone(),
+        }
     }
 
     /// Importa um arquivo exportado. Ids repetidos ganham ids novos (e as referências entre hosts,
@@ -384,7 +420,9 @@ impl Vault {
         let mut data = self.data.lock().unwrap();
         let mut remap: HashMap<String, String> = HashMap::new();
         let taken = |data: &VaultData, id: &str| {
-            data.hosts.iter().any(|h| h.id == id) || data.credentials.iter().any(|c| c.id == id) || data.tunnels.iter().any(|t| t.id == id)
+            data.hosts.iter().any(|h| h.id == id)
+                || data.credentials.iter().any(|c| c.id == id)
+                || data.tunnels.iter().any(|t| t.id == id)
         };
         let mut fresh = |data: &VaultData, id: &str| -> String {
             let new = if id.is_empty() || taken(data, id) { uuid::Uuid::new_v4().to_string() } else { id.to_string() };
@@ -403,7 +441,13 @@ impl Vault {
         for t in &mut tunnels {
             t.id = fresh(&data, &t.id);
         }
-        let map = |id: &str| if id.is_empty() { String::new() } else { remap.get(id).cloned().unwrap_or_else(|| id.to_string()) };
+        let map = |id: &str| {
+            if id.is_empty() {
+                String::new()
+            } else {
+                remap.get(id).cloned().unwrap_or_else(|| id.to_string())
+            }
+        };
         for h in &mut hosts {
             h.jump_host_id = map(&h.jump_host_id);
             h.credential_id = map(&h.credential_id);
@@ -496,7 +540,11 @@ fn route_in(data: &VaultData, id: &str) -> Result<Route, String> {
             return Err("o caminho de jump hosts é circular (ou longo demais)".into());
         }
         let host = data.hosts.iter().find(|h| h.id == next).ok_or_else(|| {
-            if route.is_empty() { "host não encontrado".to_string() } else { "o jump host configurado não existe mais".to_string() }
+            if route.is_empty() {
+                "host não encontrado".to_string()
+            } else {
+                "o jump host configurado não existe mais".to_string()
+            }
         })?;
         if !route.is_empty() && host.protocol != Protocol::Ssh {
             return Err(format!("o jump host \"{}\" não é um host SSH", host.label));
@@ -514,7 +562,9 @@ fn route_in(data: &VaultData, id: &str) -> Result<Route, String> {
 /// Host pronto para conectar: com credencial, o usuário, o método, a chave e os segredos vêm dela
 /// (o id continua o do host, para os erros e os prompts apontarem o host certo).
 fn effective(data: &VaultData, host: &Host) -> (Host, Secret) {
-    let credential = (!host.credential_id.is_empty()).then(|| data.credentials.iter().find(|c| c.id == host.credential_id)).flatten();
+    let credential = (!host.credential_id.is_empty())
+        .then(|| data.credentials.iter().find(|c| c.id == host.credential_id))
+        .flatten();
     match credential {
         Some(c) => {
             let mut host = host.clone();
@@ -597,7 +647,13 @@ mod tests {
     }
 
     fn host(label: &str) -> Host {
-        Host { label: label.into(), hostname: format!("{label}.lan"), port: 22, username: "local".into(), ..Default::default() }
+        Host {
+            label: label.into(),
+            hostname: format!("{label}.lan"),
+            port: 22,
+            username: "local".into(),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -605,12 +661,23 @@ mod tests {
         let v = vault();
         let cred = v
             .save_credential(
-                Credential { label: "prod".into(), username: "deploy".into(), auth: AuthMethod::Password, ..Default::default() },
+                Credential {
+                    label: "prod".into(),
+                    username: "deploy".into(),
+                    auth: AuthMethod::Password,
+                    ..Default::default()
+                },
                 SecretUpdate { password: Some("s3nha".into()), ..Default::default() },
             )
             .unwrap();
         let web = v.save_host(Host { credential_id: cred.id.clone(), ..host("web") }, None, None).unwrap();
-        let rdp = v.save_host(Host { credential_id: cred.id.clone(), protocol: Protocol::Rdp, port: 3389, ..host("desk") }, None, None).unwrap();
+        let rdp = v
+            .save_host(
+                Host { credential_id: cred.id.clone(), protocol: Protocol::Rdp, port: 3389, ..host("desk") },
+                None,
+                None,
+            )
+            .unwrap();
 
         for id in [&web.id, &rdp.id] {
             let (h, s) = v.host(id).unwrap();
@@ -630,9 +697,14 @@ mod tests {
     fn deleting_a_credential_keeps_the_hosts() {
         let v = vault();
         let cred = v
-            .save_credential(Credential { label: "c".into(), username: "ana".into(), ..Default::default() }, SecretUpdate::default())
+            .save_credential(
+                Credential { label: "c".into(), username: "ana".into(), ..Default::default() },
+                SecretUpdate::default(),
+            )
             .unwrap();
-        let h = v.save_host(Host { credential_id: cred.id.clone(), username: String::new(), ..host("a") }, None, None).unwrap();
+        let h = v
+            .save_host(Host { credential_id: cred.id.clone(), username: String::new(), ..host("a") }, None, None)
+            .unwrap();
         v.delete_credential(&cred.id).unwrap();
         let (host, secret) = v.host(&h.id).unwrap();
         assert!(host.credential_id.is_empty());
@@ -652,15 +724,26 @@ mod tests {
             v.host(&h.id).unwrap()
         };
         russh::keys::decode_secret_key(secret.private_key.as_deref().unwrap(), None).unwrap();
-        assert!(v.save_credential(Credential::default(), SecretUpdate { private_key: Some("lixo".into()), ..Default::default() }).is_err());
+        assert!(v
+            .save_credential(
+                Credential::default(),
+                SecretUpdate { private_key: Some("lixo".into()), ..Default::default() }
+            )
+            .is_err());
     }
 
     #[test]
     fn import_remaps_ids() {
         let v = vault();
-        let cred = v.save_credential(Credential { label: "c".into(), ..Default::default() }, SecretUpdate::default()).unwrap();
+        let cred =
+            v.save_credential(Credential { label: "c".into(), ..Default::default() }, SecretUpdate::default()).unwrap();
         let jump = v.save_host(host("jump"), None, None).unwrap();
-        v.save_host(Host { jump_host_id: jump.id.clone(), credential_id: cred.id.clone(), ..host("inner") }, None, None).unwrap();
+        v.save_host(
+            Host { jump_host_id: jump.id.clone(), credential_id: cred.id.clone(), ..host("inner") },
+            None,
+            None,
+        )
+        .unwrap();
 
         // Importar o próprio export duplica tudo com ids novos, mantendo as ligações.
         let count = v.import(v.export()).unwrap();

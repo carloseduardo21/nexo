@@ -68,7 +68,8 @@ fn parse_file(path: &Path) -> Result<Vec<Entry>, String> {
 /// Hosts a cadastrar: os escolhidos e os jump hosts de que eles dependem.
 pub fn to_hosts(path: &Path, aliases: &[String], existing: &[Host]) -> Result<Vec<Host>, String> {
     let entries = parse_file(path)?;
-    let mut importer = Importer { entries: &entries, existing, ids: HashMap::new(), created: Vec::new(), visiting: HashSet::new() };
+    let mut importer =
+        Importer { entries: &entries, existing, ids: HashMap::new(), created: Vec::new(), visiting: HashSet::new() };
     for alias in aliases {
         let entry = entries.iter().find(|e| &e.alias == alias).ok_or_else(|| format!("{alias} não está no arquivo"))?;
         importer.import(entry)?;
@@ -135,10 +136,12 @@ impl Importer<'_> {
         let entry = self.entries.iter().find(|e| e.alias == name).cloned();
         let id = match entry {
             // Alias do arquivo sem sobrescrever usuário/porta: usa (ou importa) aquele host.
-            Some(entry) if user.is_none() && port.is_none() => match self.find(&entry.hostname, &entry.user, entry.port) {
-                Some(id) => id,
-                None => self.import(&entry)?,
-            },
+            Some(entry) if user.is_none() && port.is_none() => {
+                match self.find(&entry.hostname, &entry.user, entry.port) {
+                    Some(id) => id,
+                    None => self.import(&entry)?,
+                }
+            }
             entry => {
                 let hostname = entry.as_ref().map_or(name.to_string(), |e| e.hostname.clone());
                 let user = user.or_else(|| entry.as_ref().map(|e| e.user.clone())).unwrap_or_else(default_user);
@@ -285,7 +288,10 @@ fn resolve(blocks: &[Block]) -> Vec<Entry> {
                 }
             }
             let hostname = options.get("hostname").map_or(alias.to_string(), |h| h.replace("%h", alias));
-            let proxy_jump = options.get("proxyjump").filter(|j| !j.eq_ignore_ascii_case("none")).map_or(String::new(), |j| j.to_string());
+            let proxy_jump = options
+                .get("proxyjump")
+                .filter(|j| !j.eq_ignore_ascii_case("none"))
+                .map_or(String::new(), |j| j.to_string());
             Entry {
                 alias: alias.to_string(),
                 hostname,
@@ -397,7 +403,10 @@ Host *
         assert_eq!(bastion.identity_file, "~/.ssh/minha chave");
 
         let web = &entries[1];
-        assert_eq!((web.hostname.as_str(), web.user.as_str(), web.proxy_jump.as_str()), ("web.interno", "padrao", "bastion"));
+        assert_eq!(
+            (web.hostname.as_str(), web.user.as_str(), web.proxy_jump.as_str()),
+            ("web.interno", "padrao", "bastion")
+        );
 
         // O primeiro valor vence: "Host web db" não define porta, então vale a do bloco "Host db".
         let db = &entries[2];

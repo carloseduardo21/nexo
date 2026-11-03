@@ -348,10 +348,7 @@ fn parse_table(text: &str) -> Result<Table, String> {
 }
 
 fn get(path: String, accept: &str) -> Result<http::Request<Vec<u8>>, String> {
-    http::Request::get(path)
-        .header(http::header::ACCEPT, accept)
-        .body(Vec::new())
-        .map_err(|e| e.to_string())
+    http::Request::get(path).header(http::header::ACCEPT, accept).body(Vec::new()).map_err(|e| e.to_string())
 }
 
 pub async fn list(client: &Client, resource: &Resource, namespace: Option<&str>) -> Result<Table, String> {
@@ -365,10 +362,7 @@ pub async fn list(client: &Client, resource: &Resource, namespace: Option<&str>)
 }
 
 pub async fn namespaces(client: &Client) -> Result<Vec<String>, String> {
-    let list: Value = client
-        .request(get("/api/v1/namespaces".into(), "application/json")?)
-        .await
-        .map_err(describe)?;
+    let list: Value = client.request(get("/api/v1/namespaces".into(), "application/json")?).await.map_err(describe)?;
     let mut names: Vec<String> = list["items"]
         .as_array()
         .into_iter()
@@ -381,14 +375,26 @@ pub async fn namespaces(client: &Client) -> Result<Vec<String>, String> {
 
 /// O objeto em YAML, como o `kubectl get -o yaml` (sem `managedFields`). Em Secrets, os
 /// valores ficam escondidos a não ser que `reveal`.
-pub async fn yaml(client: &Client, resource: &Resource, namespace: Option<&str>, name: &str, reveal: bool) -> Result<String, String> {
+pub async fn yaml(
+    client: &Client,
+    resource: &Resource,
+    namespace: Option<&str>,
+    name: &str,
+    reveal: bool,
+) -> Result<String, String> {
     let mut object = get_json(client, object_path(resource, namespace, name)?).await?;
     to_yaml(&mut object, resource.is(Kind::Secret) && !reveal)
 }
 
 /// Substitui o objeto pelo YAML editado (PUT). O `resourceVersion` que veio no YAML faz o
 /// servidor recusar se alguém mudou o objeto nesse meio-tempo. Devolve o YAML novo.
-pub async fn apply(client: &Client, resource: &Resource, namespace: Option<&str>, name: &str, text: &str) -> Result<String, String> {
+pub async fn apply(
+    client: &Client,
+    resource: &Resource,
+    namespace: Option<&str>,
+    name: &str,
+    text: &str,
+) -> Result<String, String> {
     let object = edited(resource, namespace, name, text)?;
     let request = http::Request::put(object_path(resource, namespace, name)?)
         .header(http::header::CONTENT_TYPE, "application/json")
@@ -474,12 +480,20 @@ pub(crate) fn merge_patch(path: String, body: &Value) -> Result<http::Request<Ve
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Action {
     Delete,
-    Scale { replicas: u32 },
+    Scale {
+        replicas: u32,
+    },
     /// Como o `kubectl rollout restart`: muda uma anotação do template e os pods são recriados.
     Restart,
 }
 
-pub async fn act(client: &Client, resource: &Resource, namespace: Option<&str>, name: &str, action: Action) -> Result<(), String> {
+pub async fn act(
+    client: &Client,
+    resource: &Resource,
+    namespace: Option<&str>,
+    name: &str,
+    action: Action,
+) -> Result<(), String> {
     let path = object_path(resource, namespace, name)?;
     let kind = match resource {
         Resource::Builtin(kind) => Some(*kind),
@@ -500,7 +514,11 @@ pub async fn act(client: &Client, resource: &Resource, namespace: Option<&str>, 
             if !matches!(kind, Some(Kind::Deployment | Kind::StatefulSet | Kind::ReplicaSet)) {
                 return Err("este tipo não escala".into());
             }
-            send(client, merge_patch(format!("{path}/scale"), &serde_json::json!({ "spec": { "replicas": replicas } }))?).await
+            send(
+                client,
+                merge_patch(format!("{path}/scale"), &serde_json::json!({ "spec": { "replicas": replicas } }))?,
+            )
+            .await
         }
         Action::Restart => {
             if !matches!(kind, Some(Kind::Deployment | Kind::StatefulSet | Kind::DaemonSet)) {
@@ -530,9 +548,15 @@ pub async fn containers(client: &Client, namespace: &str, pod: &str) -> Result<(
 
 fn pod_containers(pod: &Value) -> (Vec<ContainerInfo>, String) {
     let names = |field: &str| -> Vec<String> {
-        pod["spec"][field].as_array().into_iter().flatten().filter_map(|c| c["name"].as_str().map(str::to_owned)).collect()
+        pod["spec"][field]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| c["name"].as_str().map(str::to_owned))
+            .collect()
     };
-    let mut list: Vec<ContainerInfo> = names("containers").into_iter().map(|name| ContainerInfo { name, init: false }).collect();
+    let mut list: Vec<ContainerInfo> =
+        names("containers").into_iter().map(|name| ContainerInfo { name, init: false }).collect();
     list.extend(names("initContainers").into_iter().map(|name| ContainerInfo { name, init: true }));
     let annotated = pod["metadata"]["annotations"]["kubectl.kubernetes.io/default-container"].as_str();
     let default = annotated
@@ -553,7 +577,10 @@ pub struct Port {
 
 /// Tipos em que dá para abrir um port-forward.
 pub fn forwardable(kind: Kind) -> bool {
-    matches!(kind, Kind::Pod | Kind::Service | Kind::Deployment | Kind::StatefulSet | Kind::DaemonSet | Kind::ReplicaSet)
+    matches!(
+        kind,
+        Kind::Pod | Kind::Service | Kind::Deployment | Kind::StatefulSet | Kind::DaemonSet | Kind::ReplicaSet
+    )
 }
 
 /// Portas conhecidas do objeto: as dos containers ou, num Service, as do Service.
@@ -591,7 +618,13 @@ fn object_ports(kind: Kind, object: &Value) -> Vec<Port> {
 
 /// Para onde vai um port-forward: o pod e a porta nele. Services e workloads escolhem um pod
 /// pronto pelo seletor (como o `kubectl port-forward svc/x`).
-pub async fn resolve(client: &Client, kind: Kind, namespace: &str, name: &str, port: u16) -> Result<(String, u16), String> {
+pub async fn resolve(
+    client: &Client,
+    kind: Kind,
+    namespace: &str,
+    name: &str,
+    port: u16,
+) -> Result<(String, u16), String> {
     if kind == Kind::Pod {
         return Ok((checked(name)?.to_owned(), port));
     }
@@ -623,7 +656,11 @@ pub async fn resolve(client: &Client, kind: Kind, namespace: &str, name: &str, p
         .filter(|p| p["metadata"]["deletionTimestamp"].is_null() && p["status"]["phase"] == "Running")
         // Os prontos primeiro.
         .max_by_key(|p| {
-            p["status"]["conditions"].as_array().into_iter().flatten().any(|c| c["type"] == "Ready" && c["status"] == "True")
+            p["status"]["conditions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|c| c["type"] == "Ready" && c["status"] == "True")
         })
         .ok_or_else(|| format!("nenhum pod rodando para {name}"))?;
     let pod_name = pod["metadata"]["name"].as_str().unwrap_or_default().to_owned();
@@ -696,10 +733,11 @@ fn parse_metrics(list: &Value) -> HashMap<String, Usage> {
                 None => name.to_owned(),
             };
             let usage = match item["containers"].as_array() {
-                Some(containers) => containers.iter().map(|c| usage_of(&c["usage"])).fold(Usage { cpu: 0.0, memory: 0.0 }, |a, b| Usage {
-                    cpu: a.cpu + b.cpu,
-                    memory: a.memory + b.memory,
-                }),
+                Some(containers) => {
+                    containers.iter().map(|c| usage_of(&c["usage"])).fold(Usage { cpu: 0.0, memory: 0.0 }, |a, b| {
+                        Usage { cpu: a.cpu + b.cpu, memory: a.memory + b.memory }
+                    })
+                }
                 None => usage_of(&item["usage"]),
             };
             (key, usage)
@@ -794,7 +832,9 @@ pub(crate) fn describe(error: kube::Error) -> String {
             _ => format!("erro {} do cluster", status.code),
         },
         kube::Error::Auth(e) => format!("falha na autenticação: {e}"),
-        e @ (kube::Error::HyperError(_) | kube::Error::Service(_)) => format!("não foi possível falar com o cluster: {}", chain(&e)),
+        e @ (kube::Error::HyperError(_) | kube::Error::Service(_)) => {
+            format!("não foi possível falar com o cluster: {}", chain(&e))
+        }
         e => e.to_string(),
     }
 }
@@ -834,9 +874,28 @@ mod tests {
     /// Os nomes que o frontend manda (`KubeKind` em backend.ts).
     #[test]
     fn kind_names() {
-        let names = ["pod", "deployment", "statefulSet", "daemonSet", "replicaSet", "job", "cronJob", "service", "ingress",
-            "networkPolicy", "configMap", "secret", "serviceAccount", "horizontalPodAutoscaler", "persistentVolumeClaim",
-            "persistentVolume", "storageClass", "node", "namespace", "event"];
+        let names = [
+            "pod",
+            "deployment",
+            "statefulSet",
+            "daemonSet",
+            "replicaSet",
+            "job",
+            "cronJob",
+            "service",
+            "ingress",
+            "networkPolicy",
+            "configMap",
+            "secret",
+            "serviceAccount",
+            "horizontalPodAutoscaler",
+            "persistentVolumeClaim",
+            "persistentVolume",
+            "storageClass",
+            "node",
+            "namespace",
+            "event",
+        ];
         for name in names {
             let kind: Kind = serde_json::from_value(name.into()).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert!(kind.path(Some("x")).is_ok());
@@ -860,7 +919,12 @@ mod tests {
         assert!(!table.truncated);
         assert_eq!(
             table.rows[0],
-            Row { name: "web-1".into(), namespace: "loja".into(), uid: "u1".into(), cells: serde_json::from_str(r#"["web-1","1/1","2 (5m ago)","10.0.0.4"]"#).unwrap() }
+            Row {
+                name: "web-1".into(),
+                namespace: "loja".into(),
+                uid: "u1".into(),
+                cells: serde_json::from_str(r#"["web-1","1/1","2 (5m ago)","10.0.0.4"]"#).unwrap()
+            }
         );
         let cut = parse_table(r#"{"columnDefinitions":[],"rows":[],"metadata":{"continue":"abc"}}"#).unwrap();
         assert!(cut.truncated);
@@ -888,7 +952,10 @@ mod tests {
             "containers": [{"name": "sidecar"}, {"name": "app", "ports": [{"containerPort": 8080, "name": "http"}, {"containerPort": 9090, "protocol": "TCP"}]}]}});
         let (list, default) = pod_containers(&pod);
         assert_eq!(default, "app");
-        assert_eq!(list.iter().map(|c| (c.name.as_str(), c.init)).collect::<Vec<_>>(), [("sidecar", false), ("app", false), ("migrate", true)]);
+        assert_eq!(
+            list.iter().map(|c| (c.name.as_str(), c.init)).collect::<Vec<_>>(),
+            [("sidecar", false), ("app", false), ("migrate", true)]
+        );
         let ports = object_ports(Kind::Pod, &pod);
         assert_eq!(ports[0], Port { port: 8080, name: "http".into(), protocol: "TCP".into() });
         assert_eq!(ports.len(), 2);
@@ -901,14 +968,30 @@ mod tests {
 
     #[test]
     fn custom_paths() {
-        let custom = Resource::Custom(Custom { group: "cert-manager.io".into(), version: "v1".into(), plural: "certificates".into(), namespaced: true });
+        let custom = Resource::Custom(Custom {
+            group: "cert-manager.io".into(),
+            version: "v1".into(),
+            plural: "certificates".into(),
+            namespaced: true,
+        });
         assert_eq!(custom.path(Some("web")).unwrap(), "/apis/cert-manager.io/v1/namespaces/web/certificates");
         assert_eq!(custom.path(None).unwrap(), "/apis/cert-manager.io/v1/certificates");
-        let evil = Resource::Custom(Custom { group: "a/../b".into(), version: "v1".into(), plural: "x".into(), namespaced: false });
+        let evil = Resource::Custom(Custom {
+            group: "a/../b".into(),
+            version: "v1".into(),
+            plural: "x".into(),
+            namespaced: false,
+        });
         assert!(evil.path(None).is_err());
         // O frontend manda o tipo como texto (conhecido) ou objeto (custom).
         assert_eq!(serde_json::from_str::<Resource>(r#""pod""#).unwrap(), Resource::Builtin(Kind::Pod));
-        assert_eq!(serde_json::from_str::<Resource>(r#"{"group":"cert-manager.io","version":"v1","plural":"certificates","namespaced":true}"#).unwrap(), custom);
+        assert_eq!(
+            serde_json::from_str::<Resource>(
+                r#"{"group":"cert-manager.io","version":"v1","plural":"certificates","namespaced":true}"#
+            )
+            .unwrap(),
+            custom
+        );
     }
 
     #[test]
@@ -932,7 +1015,16 @@ mod tests {
         let list = serde_json::json!({"items": [{"spec": {"group": "cert-manager.io", "scope": "Namespaced",
             "names": {"plural": "certificates", "kind": "Certificate"},
             "versions": [{"name": "v1alpha2", "served": false, "storage": false}, {"name": "v1", "served": true, "storage": true}]}}]});
-        assert_eq!(parse_crds(&list), [CustomInfo { group: "cert-manager.io".into(), version: "v1".into(), plural: "certificates".into(), kind: "Certificate".into(), namespaced: true }]);
+        assert_eq!(
+            parse_crds(&list),
+            [CustomInfo {
+                group: "cert-manager.io".into(),
+                version: "v1".into(),
+                plural: "certificates".into(),
+                kind: "Certificate".into(),
+                namespaced: true
+            }]
+        );
     }
 
     #[test]
@@ -1094,7 +1186,8 @@ mod live_actions {
         term.write(b"\x03").unwrap();
         wait_for(|| code.lock().unwrap().is_some()).await;
 
-        let err = crate::k8s_term::open(client, NS, &pod, "nao-existe", mode, 100, 30, capture().0, exit_capture().0).await;
+        let err =
+            crate::k8s_term::open(client, NS, &pod, "nao-existe", mode, 100, 30, capture().0, exit_capture().0).await;
         assert!(err.is_err());
     }
 
@@ -1123,7 +1216,10 @@ mod live_actions {
         let mut socket = tokio::net::TcpStream::connect(("127.0.0.1", bad.local_port)).await.unwrap();
         let mut sink = Vec::new();
         let _ = socket.read_to_end(&mut sink).await;
-        wait_for(|| kube.forwards.list().iter().any(|f| f.id == bad.id && f.error == "nada escutando na porta 81 do pod")).await;
+        wait_for(|| {
+            kube.forwards.list().iter().any(|f| f.id == bad.id && f.error == "nada escutando na porta 81 do pod")
+        })
+        .await;
         println!("{:?}", kube.forwards.list());
         kube.forwards.stop(info.id);
         kube.forwards.stop(bad.id);
@@ -1159,16 +1255,30 @@ mod live_actions {
     #[ignore]
     async fn live_custom() {
         let client = client().await;
-        let info = custom_resources(&client).await.unwrap().into_iter().find(|c| c.group == "nexo.test").expect("sem o CRD de teste");
-        assert_eq!((info.kind.as_str(), info.plural.as_str(), info.version.as_str(), info.namespaced), ("Widget", "widgets", "v1", true));
-        let widget = Resource::Custom(Custom { group: info.group, version: info.version, plural: info.plural, namespaced: true });
+        let info = custom_resources(&client)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.group == "nexo.test")
+            .expect("sem o CRD de teste");
+        assert_eq!(
+            (info.kind.as_str(), info.plural.as_str(), info.version.as_str(), info.namespaced),
+            ("Widget", "widgets", "v1", true)
+        );
+        let widget = Resource::Custom(Custom {
+            group: info.group,
+            version: info.version,
+            plural: info.plural,
+            namespaced: true,
+        });
         let table = list(&client, &widget, Some(NS)).await.unwrap();
         assert!(table.columns.iter().any(|c| c.name == "Color"));
         assert_eq!(table.rows[0].name, "azul");
         let all = list(&client, &widget, None).await.unwrap();
         assert_eq!(all.rows[0].namespace, NS);
         let text = yaml(&client, &widget, Some(NS), "azul", false).await.unwrap();
-        let saved = apply(&client, &widget, Some(NS), "azul", &text.replace("color: blue", "color: navy")).await.unwrap();
+        let saved =
+            apply(&client, &widget, Some(NS), "azul", &text.replace("color: blue", "color: navy")).await.unwrap();
         assert!(saved.contains("color: navy"));
         apply(&client, &widget, Some(NS), "azul", &saved.replace("color: navy", "color: blue")).await.unwrap();
     }

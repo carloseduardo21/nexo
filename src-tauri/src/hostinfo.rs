@@ -69,7 +69,9 @@ pub fn parse(output: &str) -> Result<Metrics, String> {
             }
             "mem" => {
                 let mut parts = line.split_whitespace();
-                let (Some(key), Some(value)) = (parts.next(), parts.next().and_then(|v| v.parse::<u64>().ok())) else { continue };
+                let (Some(key), Some(value)) = (parts.next(), parts.next().and_then(|v| v.parse::<u64>().ok())) else {
+                    continue;
+                };
                 let bytes = value * 1024;
                 match key {
                     "MemTotal:" => m.mem_total = bytes,
@@ -84,7 +86,9 @@ pub fn parse(output: &str) -> Result<Metrics, String> {
                     *slot = v.parse().unwrap_or(0.0);
                 }
             }
-            "uptime" => m.uptime = line.split_whitespace().next().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0) as u64,
+            "uptime" => {
+                m.uptime = line.split_whitespace().next().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0) as u64
+            }
             "cpus" => m.cpus = line.trim().parse().unwrap_or(0),
             "host" => {
                 match host_lines {

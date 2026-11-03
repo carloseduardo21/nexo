@@ -24,9 +24,7 @@ pub struct LocalPty {
 
 impl Session for LocalPty {
     fn write(&self, data: &[u8]) -> std::io::Result<()> {
-        self.input
-            .send(data.to_vec())
-            .map_err(|_| std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+        self.input.send(data.to_vec()).map_err(|_| std::io::Error::from(std::io::ErrorKind::BrokenPipe))
     }
 
     fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
@@ -192,9 +190,12 @@ mod tests {
     #[test]
     #[ignore]
     fn live_pty_command() {
-        let profile = crate::shells::profiles().iter().find(|p| p.kind == "wsl" || p.kind == "unix").expect("sem WSL").clone();
-        let (program, args) = sh_command(&profile, "a='x y'; command -v sh >/dev/null && echo \"ok:[$a]\" || echo falhou").unwrap();
-        let pair = native_pty_system().openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }).unwrap();
+        let profile =
+            crate::shells::profiles().iter().find(|p| p.kind == "wsl" || p.kind == "unix").expect("sem WSL").clone();
+        let (program, args) =
+            sh_command(&profile, "a='x y'; command -v sh >/dev/null && echo \"ok:[$a]\" || echo falhou").unwrap();
+        let pair =
+            native_pty_system().openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }).unwrap();
         let mut cmd = CommandBuilder::new(program);
         cmd.args(args);
         let mut child = pair.slave.spawn_command(cmd).unwrap();
@@ -235,7 +236,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn live_wsl_run() {
-        let profile = crate::shells::profiles().iter().find(|p| p.kind == "wsl" || p.kind == "unix").expect("sem WSL").clone();
+        let profile =
+            crate::shells::profiles().iter().find(|p| p.kind == "wsl" || p.kind == "unix").expect("sem WSL").clone();
         let script = "a='x y'; echo \"[$a]\" \"$(printf '%s' \"q'q\")\"\nread line; echo \"got:$line\"; exit 7";
         let out = run(&profile, script, Some(b"segredo\n")).await.unwrap();
         assert_eq!(out.stdout(), "[x y] q'q\ngot:segredo\n", "{}", out.stderr());

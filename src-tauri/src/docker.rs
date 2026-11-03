@@ -87,7 +87,8 @@ pub fn parse_list(output: &str) -> Vec<Container> {
 /// os do Compose não.
 fn label<'a>(labels: &'a str, key: &str) -> Option<&'a str> {
     let needle = format!("{key}=");
-    let start = labels.match_indices(&needle).find(|(i, _)| *i == 0 || labels.as_bytes()[i - 1] == b',')?.0 + needle.len();
+    let start =
+        labels.match_indices(&needle).find(|(i, _)| *i == 0 || labels.as_bytes()[i - 1] == b',')?.0 + needle.len();
     labels[start..].split(',').next()
 }
 
@@ -137,7 +138,10 @@ pub fn logs_command(id: &str, sudo: bool) -> String {
 
 /// Shell interativo no container: bash se houver, senão sh.
 pub fn shell_command(id: &str, sudo: bool) -> String {
-    format!("{}docker exec -it {id} sh -c 'command -v bash >/dev/null && exec bash || exec sh'", if sudo { "sudo " } else { "" })
+    format!(
+        "{}docker exec -it {id} sh -c 'command -v bash >/dev/null && exec bash || exec sh'",
+        if sudo { "sudo " } else { "" }
+    )
 }
 
 /// Como rodar o comando: direto, ou via `sudo` com a senha na entrada (`-S`) — ou sem senha
@@ -159,10 +163,16 @@ fn shell_quote(s: &str) -> String {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Error {
     /// Usuário fora do grupo docker: dá para tentar com sudo.
-    Permission { message: String },
+    Permission {
+        message: String,
+    },
     /// O sudo pediu senha e não havia uma (ou ela estava errada).
-    NeedSudoPassword { wrong: bool },
-    Other { message: String },
+    NeedSudoPassword {
+        wrong: bool,
+    },
+    Other {
+        message: String,
+    },
 }
 
 impl Error {
@@ -190,7 +200,9 @@ pub fn describe_error(status: Option<u32>, stderr: &str) -> Error {
         return Error::other("o Docker não está instalado neste servidor");
     }
     if lower.contains("permission denied") && lower.contains("docker") {
-        return Error::Permission { message: "sem permissão para usar o Docker (o usuário não está no grupo docker)".into() };
+        return Error::Permission {
+            message: "sem permissão para usar o Docker (o usuário não está no grupo docker)".into(),
+        };
     }
     // "Cannot connect to the Docker daemon" (até o 28) / "failed to connect to the docker API" (29+).
     if lower.contains("connect to the docker daemon") || lower.contains("failed to connect to the docker api") {
@@ -256,19 +268,28 @@ mod tests {
 
     #[test]
     fn friendly_errors() {
-        let denied = "permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock";
+        let denied =
+            "permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock";
         assert!(matches!(describe_error(Some(1), denied), Error::Permission { .. }));
         assert!(message(describe_error(Some(4), "")).contains("não está instalado"));
         let down = "failed to connect to the docker API at unix:///var/run/docker.sock; check if the path is correct and if the daemon is running";
         assert!(message(describe_error(Some(5), down)).contains("não está rodando"));
-        assert_eq!(message(describe_error(Some(1), "Error response from daemon: conflict: container is running")), "conflict: container is running");
+        assert_eq!(
+            message(describe_error(Some(1), "Error response from daemon: conflict: container is running")),
+            "conflict: container is running"
+        );
     }
 
     #[test]
     fn sudo_errors() {
         assert_eq!(describe_error(Some(1), "sudo: a password is required"), Error::NeedSudoPassword { wrong: false });
-        assert_eq!(describe_error(Some(1), "Sorry, try again.\nsudo: 1 incorrect password attempt"), Error::NeedSudoPassword { wrong: true });
-        assert!(message(describe_error(Some(1), "carlos is not in the sudoers file.")).contains("permissão para usar sudo"));
+        assert_eq!(
+            describe_error(Some(1), "Sorry, try again.\nsudo: 1 incorrect password attempt"),
+            Error::NeedSudoPassword { wrong: true }
+        );
+        assert!(
+            message(describe_error(Some(1), "carlos is not in the sudoers file.")).contains("permissão para usar sudo")
+        );
     }
 
     #[test]
@@ -292,7 +313,14 @@ mod live {
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         let list = parse_list(&String::from_utf8_lossy(&out.stdout));
         for c in &list {
-            println!("{:<24} {:<10} {:>8} {:<24} {}", c.name, c.state, c.cpu.map(|v| format!("{v:.1}%")).unwrap_or_default(), c.mem_usage, c.project);
+            println!(
+                "{:<24} {:<10} {:>8} {:<24} {}",
+                c.name,
+                c.state,
+                c.cpu.map(|v| format!("{v:.1}%")).unwrap_or_default(),
+                c.mem_usage,
+                c.project
+            );
         }
         assert!(!list.is_empty(), "nenhum container no Docker do WSL");
         assert!(list.iter().all(|c| valid_id(&c.id)));

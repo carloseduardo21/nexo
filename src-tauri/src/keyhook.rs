@@ -31,8 +31,8 @@ mod imp {
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        GetKeyState, VK_CAPITAL, VK_CONTROL, VK_HOME, VK_LCONTROL, VK_LMENU, VK_MENU, VK_NUMLOCK, VK_PAUSE, VK_RCONTROL,
-        VK_RMENU, VK_SCROLL,
+        GetKeyState, VK_CAPITAL, VK_CONTROL, VK_HOME, VK_LCONTROL, VK_LMENU, VK_MENU, VK_NUMLOCK, VK_PAUSE,
+        VK_RCONTROL, VK_RMENU, VK_SCROLL,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, GetForegroundWindow, GetMessageW, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
