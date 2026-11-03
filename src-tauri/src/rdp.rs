@@ -432,6 +432,13 @@ fn connector_config(host: &Host, password: &str, size: DesktopSize) -> ironrdp_c
         desktop_size: clamp_size(size),
         monitor_layout: None,
         desktop_scale_factor: 0,
+        // Campos novos da 0.12: `None`/`false` mantêm o que a 0.11 enviava (zeros, escala 100,
+        // orientação derivada do tamanho, sem mouse relativo).
+        desktop_physical_size: None,
+        desktop_orientation: None,
+        device_scale_factor: None,
+        monitor_extended_layout: None,
+        relative_mouse_input: false,
         // Os dois ligados: o servidor escolhe (Windows usa NLA; o xRDP costuma usar só TLS).
         enable_tls: true,
         enable_credssp: true,
