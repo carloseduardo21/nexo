@@ -229,6 +229,13 @@ O mock fica fora do build de produção.
   árvore de painéis e broadcast; `lib/term.ts` encapsula cada terminal; `lib/sftp.svelte.ts`
   guarda o navegador de arquivos de cada painel SSH e as transferências; `lib/rdp.ts` é o painel
   RDP (canvas, mapa de scancodes, cursor do servidor).
+- **CSP** (`app.security.csp` no `tauri.conf.json`): scripts só do próprio bundle
+  (`script-src 'self'`, sem `eval`), nenhum recurso externo, rede só pelo IPC do Tauri.
+  Estilos inline são permitidos (`'unsafe-inline'` em `style-src`) porque o xterm.js e o Svelte
+  os usam; por isso `dangerousDisableAssetCspModification: ["style-src"]` impede o Tauri de pôr
+  nonces ali (com nonce, o navegador ignora o `'unsafe-inline'`). Imagens `data:` são o cursor do
+  RDP. O `devCsp` é igual, mais o WebSocket do Vite. Recurso novo no frontend (fonte, imagem
+  remota, worker) precisa entrar na política, senão o WebView bloqueia.
 
 ## Política de assinatura de código (Code signing policy)
 
