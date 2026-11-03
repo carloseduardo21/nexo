@@ -30,19 +30,19 @@ uuid = { version = "1.29.0", features = ["v4"] }
 sha2 = "0.10"
 x509-cert = { version = "0.3", default-features = false, features = ["std", "pem"] }
 # RDP (IronRDP). Mesmo conjunto de versões em todas as crates: elas compartilham tipos.
-ironrdp-connector = "0.11"
-ironrdp-session = "0.12"
-ironrdp-tokio = "0.11"
+ironrdp-connector = "0.12"
+ironrdp-session = "0.13"
+ironrdp-tokio = "0.12"
 ironrdp-tls = { version = "0.3", features = ["rustls-ring"] }
-ironrdp-graphics = "0.10"
-ironrdp-pdu = "0.10"
+ironrdp-graphics = "0.11"
+ironrdp-pdu = "0.11"
 ironrdp-core = "0.3"
-ironrdp-dvc = "0.9"
-ironrdp-svc = "0.9"
-ironrdp-displaycontrol = "0.9"
-ironrdp-input = "0.8"
-ironrdp-cliprdr = "0.8"
-ironrdp-egfx = { version = "0.4", features = ["openh264-bundled"] }
+ironrdp-dvc = "0.10"
+ironrdp-svc = "0.10"
+ironrdp-displaycontrol = "0.10"
+ironrdp-input = "0.9"
+ironrdp-cliprdr = "0.9"
+ironrdp-egfx = { version = "0.5", features = ["openh264-bundled"] }
 arboard = { version = "3.7", default-features = false }
 # Kubernetes: cliente oficial em Rust (lê o kubeconfig, inclusive plugins `exec` de autenticação).
 kube = { version = "4.2", default-features = false, features = ["client", "rustls-tls", "ring", "ws"] }
