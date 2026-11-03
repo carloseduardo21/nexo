@@ -52,7 +52,8 @@ multiplataforma, documentação e releases confiáveis.
   `k8s*.rs` (`k8s_seal.rs`, `k8s_argo.rs`, `k8s_forward.rs`, `k8s_term.rs`).
   Registro dos comandos em `lib.rs`.
 - `src-tauri/capabilities/default.json`: permissões do frontend. APIs novas do Tauri
-  precisam de permissão aqui. `tauri.conf.json` ainda está com `"csp": null`.
+  precisam de permissão aqui. A CSP fica em `tauri.conf.json` (`csp` e `devCsp`; ver README,
+  "Arquitetura"): recurso novo no frontend precisa entrar nela.
 - `src/`: `App.svelte`, páginas e diálogos em `src/components/`, estado em
   `src/lib/*.svelte.ts`, chamadas ao backend em `src/lib/backend.ts`, componentes
   shadcn-svelte (bits-ui + Tailwind 4) em `src/lib/components/ui`.
