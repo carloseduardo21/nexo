@@ -228,7 +228,9 @@ pub async fn download(
         // Percorre a árvore remota (links para pastas não são seguidos, para evitar ciclos).
         let mut pending = vec![(path.clone(), root.clone())];
         while let Some((remote_dir, local)) = pending.pop() {
-            for entry in sftp.read_dir(remote_dir.as_str()).await.map_err(|e| format!("{remote_dir}: {}", describe(&e)))? {
+            for entry in
+                sftp.read_dir(remote_dir.as_str()).await.map_err(|e| format!("{remote_dir}: {}", describe(&e)))?
+            {
                 let name = entry.file_name();
                 if name == "." || name == ".." {
                     continue;
@@ -260,7 +262,11 @@ pub async fn download(
             let _ = tokio::fs::remove_file(&item.to).await;
             if e == CANCELED {
                 for root in &roots {
-                    let _ = if root.is_dir() { tokio::fs::remove_dir_all(root).await } else { tokio::fs::remove_file(root).await };
+                    let _ = if root.is_dir() {
+                        tokio::fs::remove_dir_all(root).await
+                    } else {
+                        tokio::fs::remove_file(root).await
+                    };
                 }
             }
             return Err(e);
@@ -297,8 +303,12 @@ pub async fn upload(
     let mut dirs = Vec::new();
     let mut files = Vec::new();
     for path in local {
-        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or_else(|| format!("{}: caminho inválido", path.display()))?;
-        collect_local(path, join(remote_dir, &name), &mut dirs, &mut files).map_err(|e| format!("{}: {e}", path.display()))?;
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .ok_or_else(|| format!("{}: caminho inválido", path.display()))?;
+        collect_local(path, join(remote_dir, &name), &mut dirs, &mut files)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
     }
 
     for dir in &dirs {
@@ -407,7 +417,8 @@ mod live {
     #[tokio::test]
     #[ignore]
     async fn live_download_upload() {
-        let mut handle = client::connect(Arc::new(client::Config::default()), ("127.0.0.1", 2222), AcceptAll).await.unwrap();
+        let mut handle =
+            client::connect(Arc::new(client::Config::default()), ("127.0.0.1", 2222), AcceptAll).await.unwrap();
         assert!(handle.authenticate_password("nexo", "nexo123").await.unwrap().success());
         let channel = handle.channel_open_session().await.unwrap();
         channel.request_subsystem(true, "sftp").await.unwrap();
@@ -423,9 +434,10 @@ mod live {
         std::fs::create_dir_all(&out).unwrap();
         let progress = Channel::new(|_| Ok(()));
         let started = Instant::now();
-        let roots = download(&sftp, &[join(&home, "grande.bin"), join(&home, "pasta")], &out, Arc::default(), progress.clone())
-            .await
-            .unwrap();
+        let roots =
+            download(&sftp, &[join(&home, "grande.bin"), join(&home, "pasta")], &out, Arc::default(), progress.clone())
+                .await
+                .unwrap();
         println!("download {:?} em {:?}", roots, started.elapsed());
         assert_eq!(std::fs::metadata(out.join("grande.bin")).unwrap().len(), 5_000_000);
         assert_eq!(std::fs::read_to_string(out.join("pasta/sub/b.txt")).unwrap(), "tchau\n");

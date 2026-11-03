@@ -1,0 +1,9 @@
+# cargo-audit (security.yml). As mesmas exceções do deny.toml, onde estão os motivos.
+[advisories]
+ignore = [
+    "RUSTSEC-2023-0071", # rsa (Marvin): sem correção, uso local
+    "RUSTSEC-2026-0367", # zip 4.x do tauri-plugin-updater
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0429",
+]

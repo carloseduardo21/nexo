@@ -1,0 +1,44 @@
+# PRs semanais de atualização. Versões menores e patches vêm agrupados num PR por ecossistema;
+# as maiores vêm uma a uma. As crates e os pacotes npm do Tauri precisam andar juntos (a CLI
+# confere se as versões batem), então ficam num grupo próprio dos dois lados.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      tauri:
+        patterns: ["tauri", "tauri-*"]
+      ironrdp:
+        patterns: ["ironrdp-*"]
+      kube:
+        patterns: ["kube", "kube-*", "k8s-openapi"]
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      tauri:
+        patterns: ["@tauri-apps/*"]
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions:
+        patterns: ["*"]

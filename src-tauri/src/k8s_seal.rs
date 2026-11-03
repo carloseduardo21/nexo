@@ -93,7 +93,9 @@ impl Entry {
     fn bytes(&self) -> Result<Option<Vec<u8>>, String> {
         match &self.value {
             None => Ok(None),
-            Some(v) if self.base64 => B64.decode(v.trim()).map(Some).map_err(|_| format!("{}: base64 inválido", self.key)),
+            Some(v) if self.base64 => {
+                B64.decode(v.trim()).map(Some).map_err(|_| format!("{}: base64 inválido", self.key))
+            }
             Some(v) => Ok(Some(v.clone().into_bytes())),
         }
     }
@@ -163,7 +165,11 @@ fn services(list: &Value) -> Vec<Controller> {
                 Some(named) => named.to_owned(),
                 None => port["port"].as_u64()?.to_string(),
             };
-            Some(Controller { namespace: svc["metadata"]["namespace"].as_str()?.to_owned(), name: name.to_owned(), port })
+            Some(Controller {
+                namespace: svc["metadata"]["namespace"].as_str()?.to_owned(),
+                name: name.to_owned(),
+                port,
+            })
         })
         .collect()
 }
@@ -175,7 +181,8 @@ pub async fn certificate(client: &Client) -> Result<RsaPublicKey, String> {
     let mut errors = Vec::new();
     for c in &candidates {
         let target = if c.port.is_empty() { c.name.clone() } else { format!("{}:{}", c.name, c.port) };
-        let path = format!("/api/v1/namespaces/{}/services/{}/proxy/v1/cert.pem", checked(&c.namespace)?, checked(&target)?);
+        let path =
+            format!("/api/v1/namespaces/{}/services/{}/proxy/v1/cert.pem", checked(&c.namespace)?, checked(&target)?);
         let request = http::Request::get(path).body(Vec::new()).map_err(|e| e.to_string())?;
         match client.request_text(request).await {
             Ok(pem) => return public_key(&pem),
@@ -204,7 +211,8 @@ fn newest_key(list: &Value) -> Option<String> {
 
 fn public_key(pem: &str) -> Result<RsaPublicKey, String> {
     use x509_cert::der::{DecodePem as _, Encode as _};
-    let cert = x509_cert::Certificate::from_pem(pem.trim()).map_err(|e| format!("certificado do controller inválido: {e}"))?;
+    let cert =
+        x509_cert::Certificate::from_pem(pem.trim()).map_err(|e| format!("certificado do controller inválido: {e}"))?;
     let spki = cert.tbs_certificate().subject_public_key_info().to_der().map_err(|e| e.to_string())?;
     RsaPublicKey::from_public_key_der(&spki).map_err(|e| format!("o certificado do controller não é RSA: {e}"))
 }
@@ -216,7 +224,8 @@ fn seal(key: &RsaPublicKey, label: &[u8], plain: &[u8]) -> Result<String, String
     let wrapped = Oaep::<Sha256>::new_with_label(label.to_vec())
         .encrypt(&mut getrandom::SysRng, key, &session)
         .map_err(|e| format!("RSA: {e}"))?;
-    let gcm = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_256_GCM, &session).map_err(|_| "AES: chave inválida")?);
+    let gcm =
+        aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_256_GCM, &session).map_err(|_| "AES: chave inválida")?);
     let mut sealed = plain.to_vec();
     gcm.seal_in_place_append_tag(aead::Nonce::assume_unique_for_key([0; 12]), aead::Aad::empty(), &mut sealed)
         .map_err(|_| "AES: falha ao cifrar")?;
@@ -303,7 +312,10 @@ pub struct Plain {
 
 pub async fn plain(client: &Client, namespace: &str, name: &str) -> Result<Plain, String> {
     let secret = get_json(client, secret_path(namespace, name)?).await?;
-    Ok(Plain { secret_type: secret["type"].as_str().unwrap_or("Opaque").to_owned(), entries: entries_of(&secret["data"]) })
+    Ok(Plain {
+        secret_type: secret["type"].as_str().unwrap_or("Opaque").to_owned(),
+        entries: entries_of(&secret["data"]),
+    })
 }
 
 // ---------- Selar e salvar ----------
@@ -345,10 +357,14 @@ pub async fn save(client: &Client, request: &Request) -> Result<String, String> 
         Some(version) => {
             // O que estava aberto, não o que acabou de ser lido: o servidor recusa se mudou.
             object["metadata"]["resourceVersion"] = version.as_str().into();
-            client.request(json_request(http::Method::PUT, object_path(namespace, name)?, &object)?).await.map_err(|e| match e {
-                kube::Error::Api(s) if s.code == 409 => "o SealedSecret mudou desde que foi aberto: abra de novo e refaça".to_owned(),
-                e => describe(e),
-            })?
+            client.request(json_request(http::Method::PUT, object_path(namespace, name)?, &object)?).await.map_err(
+                |e| match e {
+                    kube::Error::Api(s) if s.code == 409 => {
+                        "o SealedSecret mudou desde que foi aberto: abra de novo e refaça".to_owned()
+                    }
+                    e => describe(e),
+                },
+            )?
         }
         None => {
             if request.adopt {
@@ -357,7 +373,9 @@ pub async fn save(client: &Client, request: &Request) -> Result<String, String> 
             let path = format!("{API}/namespaces/{namespace}/sealedsecrets");
             client.request(json_request(http::Method::POST, path, &object)?).await.map_err(|e| match e {
                 kube::Error::Api(s) if s.code == 409 => format!("já existe um SealedSecret {name} em {namespace}"),
-                kube::Error::Api(s) if s.code == 404 => "este cluster não tem o Sealed Secrets (CRD sealedsecrets.bitnami.com)".to_owned(),
+                kube::Error::Api(s) if s.code == 404 => {
+                    "este cluster não tem o Sealed Secrets (CRD sealedsecrets.bitnami.com)".to_owned()
+                }
                 e => describe(e),
             })?
         }
@@ -370,7 +388,9 @@ fn check_entries(entries: &[Entry]) -> Result<(), String> {
         return Err("adicione ao menos um valor".into());
     }
     for (i, e) in entries.iter().enumerate() {
-        let valid = !e.key.is_empty() && e.key.len() <= 253 && e.key.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+        let valid = !e.key.is_empty()
+            && e.key.len() <= 253
+            && e.key.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
         if !valid {
             return Err(format!("chave inválida: {:?} (use letras, números, -, _ e .)", e.key));
         }
@@ -433,7 +453,16 @@ fn build(request: &Request, existing: Option<&Value>, key: Option<&RsaPublicKey>
 /// Sem os campos que o servidor preenche: o YAML que vai para o repositório.
 fn exported(mut object: Value) -> Value {
     if let Some(meta) = object["metadata"].as_object_mut() {
-        for field in ["uid", "resourceVersion", "generation", "creationTimestamp", "managedFields", "selfLink", "ownerReferences", "finalizers"] {
+        for field in [
+            "uid",
+            "resourceVersion",
+            "generation",
+            "creationTimestamp",
+            "managedFields",
+            "selfLink",
+            "ownerReferences",
+            "finalizers",
+        ] {
             meta.remove(field);
         }
         if let Some(annotations) = meta.get_mut("annotations").and_then(Value::as_object_mut) {
@@ -453,7 +482,8 @@ async fn adopt(client: &Client, namespace: &str, name: &str) -> Result<(), Strin
         Err(e) if e.starts_with("não encontrado") => return Ok(()),
         Err(e) => return Err(e),
     };
-    let owned = secret["metadata"]["ownerReferences"].as_array().into_iter().flatten().any(|o| o["kind"] == "SealedSecret");
+    let owned =
+        secret["metadata"]["ownerReferences"].as_array().into_iter().flatten().any(|o| o["kind"] == "SealedSecret");
     if owned || secret["metadata"]["annotations"][MANAGED] == "true" {
         return Ok(());
     }
@@ -489,7 +519,8 @@ mod tests {
         let session = key.decrypt(Oaep::<Sha256>::new_with_label(label.to_vec()), &data[2..2 + size]).unwrap();
         let gcm = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_256_GCM, &session).unwrap());
         let mut body = data[2 + size..].to_vec();
-        let plain = gcm.open_in_place(aead::Nonce::assume_unique_for_key([0; 12]), aead::Aad::empty(), &mut body).unwrap();
+        let plain =
+            gcm.open_in_place(aead::Nonce::assume_unique_for_key([0; 12]), aead::Aad::empty(), &mut body).unwrap();
         plain.to_vec()
     }
 
@@ -514,7 +545,13 @@ mod tests {
     fn seal_roundtrip() {
         let private = RsaPrivateKey::new(&mut UnwrapErr(getrandom::SysRng), 2048).unwrap();
         let public = private.to_public_key();
-        let req = request(Scope::Strict, vec![entry("password", Some("s3cr3t")), Entry { key: "bin".into(), value: Some("AP8=".into()), base64: true }]);
+        let req = request(
+            Scope::Strict,
+            vec![
+                entry("password", Some("s3cr3t")),
+                Entry { key: "bin".into(), value: Some("AP8=".into()), base64: true },
+            ],
+        );
         let object = build(&req, None, Some(&public)).unwrap();
         let data = &object["spec"]["encryptedData"];
         assert_eq!(unseal(&private, b"loja/db", data["password"].as_str().unwrap()), b"s3cr3t");
@@ -632,7 +669,8 @@ mod live {
         for _ in 0..60 {
             let opened = sealed(client, NS, name).await.unwrap();
             assert!(opened.status.is_empty(), "o controller recusou: {}", opened.status);
-            let got: BTreeMap<_, _> = opened.entries.iter().filter_map(|e| Some((e.key.as_str(), e.value.as_deref()?))).collect();
+            let got: BTreeMap<_, _> =
+                opened.entries.iter().filter_map(|e| Some((e.key.as_str(), e.value.as_deref()?))).collect();
             if got == want.iter().copied().collect() {
                 return opened;
             }
@@ -647,7 +685,9 @@ mod live {
         let client = client().await;
         certificate(&client).await.unwrap();
         let name = "nexo-sealed";
-        let _ = client.request::<Value>(http::Request::delete(object_path(NS, name).unwrap()).body(Vec::new()).unwrap()).await;
+        let _ = client
+            .request::<Value>(http::Request::delete(object_path(NS, name).unwrap()).body(Vec::new()).unwrap())
+            .await;
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
         let entry = |k: &str, v: Option<&str>| Entry { key: k.into(), value: v.map(str::to_owned), base64: false };
@@ -688,10 +728,17 @@ mod live {
 
         // Selar um Secret comum que já existe, no lugar dele.
         let plain_name = "nexo-plain";
-        let _ = client.request::<Value>(http::Request::delete(secret_path(NS, plain_name).unwrap()).body(Vec::new()).unwrap()).await;
-        let _ = client.request::<Value>(http::Request::delete(object_path(NS, plain_name).unwrap()).body(Vec::new()).unwrap()).await;
+        let _ = client
+            .request::<Value>(http::Request::delete(secret_path(NS, plain_name).unwrap()).body(Vec::new()).unwrap())
+            .await;
+        let _ = client
+            .request::<Value>(http::Request::delete(object_path(NS, plain_name).unwrap()).body(Vec::new()).unwrap())
+            .await;
         let secret = json!({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": plain_name, "namespace": NS}, "stringData": {"k": "v1"}});
-        let _: Value = client.request(json_request(http::Method::POST, format!("/api/v1/namespaces/{NS}/secrets"), &secret).unwrap()).await.unwrap();
+        let _: Value = client
+            .request(json_request(http::Method::POST, format!("/api/v1/namespaces/{NS}/secrets"), &secret).unwrap())
+            .await
+            .unwrap();
         let p = plain(&client, NS, plain_name).await.unwrap();
         assert_eq!(p.entries, [entry("k", Some("v1"))]);
         let convert = Request {
@@ -706,7 +753,9 @@ mod live {
         unsealed(&client, plain_name, &[("k", "v2")]).await;
 
         for n in [name, plain_name] {
-            let _ = client.request::<Value>(http::Request::delete(object_path(NS, n).unwrap()).body(Vec::new()).unwrap()).await;
+            let _ = client
+                .request::<Value>(http::Request::delete(object_path(NS, n).unwrap()).body(Vec::new()).unwrap())
+                .await;
         }
     }
 }

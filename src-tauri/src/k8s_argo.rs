@@ -38,7 +38,13 @@ pub struct Source {
 impl Source {
     fn of(v: &Value) -> Source {
         let s = |k: &str| v[k].as_str().unwrap_or_default().to_owned();
-        Source { repo_url: s("repoURL"), path: s("path"), chart: s("chart"), target_revision: s("targetRevision"), reference: s("ref") }
+        Source {
+            repo_url: s("repoURL"),
+            path: s("path"),
+            chart: s("chart"),
+            target_revision: s("targetRevision"),
+            reference: s("ref"),
+        }
     }
 }
 
@@ -127,7 +133,8 @@ fn automated(spec: &Value) -> Option<&Value> {
 }
 
 fn busy(app: &Value) -> bool {
-    app["operation"].is_object() || matches!(app["status"]["operationState"]["phase"].as_str(), Some("Running" | "Terminating"))
+    app["operation"].is_object()
+        || matches!(app["status"]["operationState"]["phase"].as_str(), Some("Running" | "Terminating"))
 }
 
 pub(crate) fn summary(app: &Value) -> App {
@@ -141,7 +148,11 @@ pub(crate) fn summary(app: &Value) -> App {
         let by = &op["operation"]["initiatedBy"];
         let revision = match op["syncResult"]["revision"].as_str() {
             Some(r) => r.to_owned(),
-            None => op["syncResult"]["revisions"][0].as_str().or(op["operation"]["sync"]["revision"].as_str()).unwrap_or_default().to_owned(),
+            None => op["syncResult"]["revisions"][0]
+                .as_str()
+                .or(op["operation"]["sync"]["revision"].as_str())
+                .unwrap_or_default()
+                .to_owned(),
         };
         Operation {
             phase: text(&op["phase"]),
@@ -201,7 +212,11 @@ pub(crate) fn summary(app: &Value) -> App {
             .as_array()
             .into_iter()
             .flatten()
-            .map(|c| Condition { kind: text(&c["type"]), message: text(&c["message"]), time: text(&c["lastTransitionTime"]) })
+            .map(|c| Condition {
+                kind: text(&c["type"]),
+                message: text(&c["message"]),
+                time: text(&c["lastTransitionTime"]),
+            })
             .collect(),
         counts,
     }
@@ -231,7 +246,9 @@ pub struct Apps {
 pub async fn apps(client: &Client) -> Result<Apps, String> {
     let list = match get_json(client, format!("{API}/applications")).await {
         Ok(list) => list,
-        Err(e) if e.starts_with("sem permissão") => get_json(client, format!("{API}/namespaces/argocd/applications")).await.map_err(|_| e)?,
+        Err(e) if e.starts_with("sem permissão") => {
+            get_json(client, format!("{API}/namespaces/argocd/applications")).await.map_err(|_| e)?
+        }
         Err(e) => return Err(e),
     };
     let mut apps: Vec<App> = list["items"].as_array().into_iter().flatten().map(summary).collect();
@@ -239,7 +256,8 @@ pub async fn apps(client: &Client) -> Result<Apps, String> {
 
     let projects = get_json(client, format!("{API}/appprojects")).await.map(|l| projects_of(&l)).unwrap_or_default();
     // O argocd-cm fica no namespace do Argo CD: o dos apps ou o padrão.
-    let mut namespaces: Vec<&str> = projects.iter().map(|p| p.namespace.as_str()).chain(apps.iter().map(|a| a.namespace.as_str())).collect();
+    let mut namespaces: Vec<&str> =
+        projects.iter().map(|p| p.namespace.as_str()).chain(apps.iter().map(|a| a.namespace.as_str())).collect();
     namespaces.push("argocd");
     let mut url = String::new();
     for ns in namespaces.into_iter().collect::<std::collections::BTreeSet<_>>() {
@@ -374,7 +392,12 @@ fn managed(app: &Value) -> Vec<Node> {
             (s, m) => format!("{s}: {m}"),
         };
         if !shown.is_empty() {
-            let id = node_id(r["group"].as_str().unwrap_or_default(), r["kind"].as_str().unwrap_or_default(), r["namespace"].as_str().unwrap_or_default(), r["name"].as_str().unwrap_or_default());
+            let id = node_id(
+                r["group"].as_str().unwrap_or_default(),
+                r["kind"].as_str().unwrap_or_default(),
+                r["namespace"].as_str().unwrap_or_default(),
+                r["name"].as_str().unwrap_or_default(),
+            );
             results.insert(id, shown);
         }
     }
@@ -383,7 +406,8 @@ fn managed(app: &Value) -> Vec<Node> {
         .into_iter()
         .flatten()
         .map(|r| {
-            let (group, kind, namespace, name) = (text(&r["group"]), text(&r["kind"]), text(&r["namespace"]), text(&r["name"]));
+            let (group, kind, namespace, name) =
+                (text(&r["group"]), text(&r["kind"]), text(&r["namespace"]), text(&r["name"]));
             let id = node_id(&group, &kind, &namespace, &name);
             Node {
                 result: results.remove(&id).unwrap_or_default(),
@@ -403,7 +427,9 @@ fn managed(app: &Value) -> Vec<Node> {
             }
         })
         .collect();
-    nodes.sort_by(|a, b| (kind_rank(&a.kind), &a.kind, &a.namespace, &a.name).cmp(&(kind_rank(&b.kind), &b.kind, &b.namespace, &b.name)));
+    nodes.sort_by(|a, b| {
+        (kind_rank(&a.kind), &a.kind, &a.namespace, &a.name).cmp(&(kind_rank(&b.kind), &b.kind, &b.namespace, &b.name))
+    });
     nodes
 }
 
@@ -453,13 +479,16 @@ async fn live_objects(client: &Client, nodes: &[Node]) -> Vec<Live> {
         }
         // O Argo CD 3 não grava mais a saúde de cada recurso no Application: a dos workloads
         // é calculada aqui, do objeto vivo.
-        for (kind, plural) in [("Deployment", "deployments"), ("StatefulSet", "statefulsets"), ("DaemonSet", "daemonsets")] {
+        for (kind, plural) in
+            [("Deployment", "deployments"), ("StatefulSet", "statefulsets"), ("DaemonSet", "daemonsets")]
+        {
             if kinds.contains(kind) {
                 requests.push((kind, format!("/apis/apps/v1/namespaces/{ns}/{plural}")));
             }
         }
     }
-    let lists = join_all(requests.into_iter().map(|(kind, path)| async move { (kind, get_json(client, path).await) })).await;
+    let lists =
+        join_all(requests.into_iter().map(|(kind, path)| async move { (kind, get_json(client, path).await) })).await;
     let mut out = Vec::new();
     for (kind, list) in lists {
         // Sem permissão para listar pods de um namespace: a árvore só fica mais rasa.
@@ -485,8 +514,13 @@ fn link(mut nodes: Vec<Node>, live: &[Live]) -> Vec<Node> {
         .map(|l| (l.kind, l.object["metadata"]["namespace"].as_str().unwrap_or_default()))
         .collect();
     for n in nodes.iter_mut().filter(|n| n.health.is_empty() && WORKLOADS.contains(&n.kind.as_str())) {
-        let listed = WORKLOADS.iter().find(|k| **k == n.kind).is_some_and(|k| read.contains(&(*k, n.namespace.as_str())));
-        let exists = live.iter().any(|l| l.kind == n.kind && text(&l.object["metadata"]["name"]) == n.name && text(&l.object["metadata"]["namespace"]) == n.namespace);
+        let listed =
+            WORKLOADS.iter().find(|k| **k == n.kind).is_some_and(|k| read.contains(&(*k, n.namespace.as_str())));
+        let exists = live.iter().any(|l| {
+            l.kind == n.kind
+                && text(&l.object["metadata"]["name"]) == n.name
+                && text(&l.object["metadata"]["namespace"]) == n.namespace
+        });
         if listed && !exists {
             n.health = "Missing".into();
         }
@@ -516,7 +550,9 @@ fn link(mut nodes: Vec<Node>, live: &[Live]) -> Vec<Node> {
             let owners = meta["ownerReferences"].as_array();
             let owner = owners.and_then(|o| o.iter().find(|r| r["controller"] == true).or(o.first()));
             let Some(owner) = owner else { continue };
-            let Some(&parent) = index.get(&(namespace.clone(), text(&owner["kind"]), text(&owner["name"]))) else { continue };
+            let Some(&parent) = index.get(&(namespace.clone(), text(&owner["kind"]), text(&owner["name"]))) else {
+                continue;
+            };
             let mut node = describe_live(item.kind, &item.object);
             node.parent = nodes[parent].id.clone();
             index.insert(key, nodes.len());
@@ -563,7 +599,12 @@ fn describe_live(kind: &'static str, object: &Value) -> Node {
             node.health = health.into();
             node.health_message = message;
             node.info.push(format!("{ready}/{want} prontos"));
-            node.images = spec["template"]["spec"]["containers"].as_array().into_iter().flatten().filter_map(|c| c["image"].as_str().map(str::to_owned)).collect();
+            node.images = spec["template"]["spec"]["containers"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| c["image"].as_str().map(str::to_owned))
+                .collect();
         }
         "Job" => {
             let conditions = status["conditions"].as_array().into_iter().flatten();
@@ -582,7 +623,9 @@ fn describe_live(kind: &'static str, object: &Value) -> Node {
             .into();
             node.info.push(match (num(&status["succeeded"]), num(&status["failed"]), num(&status["active"])) {
                 (s, 0, 0) if complete => format!("concluído ({s})"),
-                (_, f, a) if a > 0 => format!("{a} rodando{}", if f > 0 { format!(", {f} falhas") } else { String::new() }),
+                (_, f, a) if a > 0 => {
+                    format!("{a} rodando{}", if f > 0 { format!(", {f} falhas") } else { String::new() })
+                }
                 (s, f, _) => format!("{s} ok, {f} falhas"),
             });
         }
@@ -598,7 +641,12 @@ fn describe_live(kind: &'static str, object: &Value) -> Node {
             if let Some(n) = spec["nodeName"].as_str() {
                 node.info.push(n.to_owned());
             }
-            node.images = spec["containers"].as_array().into_iter().flatten().filter_map(|c| c["image"].as_str().map(str::to_owned)).collect();
+            node.images = spec["containers"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| c["image"].as_str().map(str::to_owned))
+                .collect();
         }
     }
     node
@@ -626,7 +674,8 @@ fn workload_health(kind: &str, object: &Value) -> (&'static str, String, u64, u6
             } else {
                 num(&status["updatedReplicas"])
             };
-            let available = if kind == "StatefulSet" { num(&status["readyReplicas"]) } else { num(&status["availableReplicas"]) };
+            let available =
+                if kind == "StatefulSet" { num(&status["readyReplicas"]) } else { num(&status["availableReplicas"]) };
             (num(&status["readyReplicas"]), want, updated, available)
         }
     };
@@ -789,10 +838,20 @@ pub enum Action {
         resources: Vec<Target>,
     },
     /// Volta para uma versão do histórico (só com o auto-sync desligado, como no Argo).
-    Rollback { id: i64, #[serde(default)] prune: bool },
+    Rollback {
+        id: i64,
+        #[serde(default)]
+        prune: bool,
+    },
     /// Interrompe a operação em andamento.
     Terminate,
-    AutoSync { enabled: bool, #[serde(default)] prune: bool, #[serde(default)] self_heal: bool },
+    AutoSync {
+        enabled: bool,
+        #[serde(default)]
+        prune: bool,
+        #[serde(default)]
+        self_heal: bool,
+    },
 }
 
 /// As opções do app (`spec.syncPolicy.syncOptions`, como `CreateNamespace=true`) mais as
@@ -818,7 +877,9 @@ const INITIATOR: &str = "nexo";
 pub async fn act(client: &Client, namespace: &str, name: &str, action: Action) -> Result<(), String> {
     let path = app_path(namespace, name)?;
     let body = match action {
-        Action::Refresh { hard } => json!({ "metadata": { "annotations": { REFRESH: if hard { "hard" } else { "normal" } } } }),
+        Action::Refresh { hard } => {
+            json!({ "metadata": { "annotations": { REFRESH: if hard { "hard" } else { "normal" } } } })
+        }
         Action::Terminate => {
             let app = get_json(client, path.clone()).await?;
             if app["status"]["operationState"]["phase"] != "Running" {
@@ -880,7 +941,10 @@ fn operation(app: &Value, action: Action) -> Result<Value, String> {
         }
         Action::Rollback { id, prune } => {
             if automated(&app["spec"]).is_some() {
-                return Err("desligue o auto-sync para voltar uma versão (senão o Argo volta para o git logo em seguida)".into());
+                return Err(
+                    "desligue o auto-sync para voltar uma versão (senão o Argo volta para o git logo em seguida)"
+                        .into(),
+                );
             }
             let entry = app["status"]["history"]
                 .as_array()
@@ -949,7 +1013,10 @@ mod tests {
     #[test]
     fn summary_reads_status() {
         let s = summary(&app_fixture());
-        assert_eq!((s.name.as_str(), s.project.as_str(), s.sync.as_str(), s.health.as_str()), ("loja", "pagamentos", "OutOfSync", "Degraded"));
+        assert_eq!(
+            (s.name.as_str(), s.project.as_str(), s.sync.as_str(), s.health.as_str()),
+            ("loja", "pagamentos", "OutOfSync", "Degraded")
+        );
         assert!(s.in_cluster && s.auto_sync && s.prune && !s.self_heal && !s.busy);
         assert_eq!(s.counts, Counts { total: 3, out_of_sync: 2, degraded: 1, progressing: 0, missing: 0 });
         assert_eq!(s.revisions, ["abc123"]);
@@ -1012,12 +1079,30 @@ mod tests {
         let nodes = managed(&app_fixture());
         let live = vec![
             // Pod antes do ReplicaSet na lista: as camadas resolvem a ordem.
-            owned("Pod", "api-7d-x", "ReplicaSet", "api-7d", json!({
-                "spec": { "containers": [{ "image": "loja:1.2" }], "nodeName": "worker" },
-                "status": { "phase": "Running", "containerStatuses": [{ "ready": false, "restartCount": 4, "state": { "waiting": { "reason": "CrashLoopBackOff", "message": "back-off" } } }] }
-            })),
-            owned("ReplicaSet", "api-7d", "Deployment", "api", json!({ "metadata": { "annotations": { "deployment.kubernetes.io/revision": "3" } }, "spec": { "replicas": 1 }, "status": { "replicas": 1, "readyReplicas": 0 } })),
-            owned("ReplicaSet", "api-6c", "Deployment", "api", json!({ "spec": { "replicas": 0 }, "status": { "replicas": 0 } })),
+            owned(
+                "Pod",
+                "api-7d-x",
+                "ReplicaSet",
+                "api-7d",
+                json!({
+                    "spec": { "containers": [{ "image": "loja:1.2" }], "nodeName": "worker" },
+                    "status": { "phase": "Running", "containerStatuses": [{ "ready": false, "restartCount": 4, "state": { "waiting": { "reason": "CrashLoopBackOff", "message": "back-off" } } }] }
+                }),
+            ),
+            owned(
+                "ReplicaSet",
+                "api-7d",
+                "Deployment",
+                "api",
+                json!({ "metadata": { "annotations": { "deployment.kubernetes.io/revision": "3" } }, "spec": { "replicas": 1 }, "status": { "replicas": 1, "readyReplicas": 0 } }),
+            ),
+            owned(
+                "ReplicaSet",
+                "api-6c",
+                "Deployment",
+                "api",
+                json!({ "spec": { "replicas": 0 }, "status": { "replicas": 0 } }),
+            ),
             // De outro app: não entra.
             owned("ReplicaSet", "outro-1", "Deployment", "outro", json!({})),
             owned("Pod", "solto", "ReplicaSet", "nao-existe", json!({})),
@@ -1040,15 +1125,33 @@ mod tests {
 
     #[test]
     fn workload_health_rules() {
-        let d = |spec: Value, status: Value| workload_health("Deployment", &json!({ "metadata": { "generation": 2 }, "spec": spec, "status": status }));
-        let ok = d(json!({ "replicas": 2 }), json!({ "observedGeneration": 2, "updatedReplicas": 2, "availableReplicas": 2, "readyReplicas": 2 }));
+        let d = |spec: Value, status: Value| {
+            workload_health("Deployment", &json!({ "metadata": { "generation": 2 }, "spec": spec, "status": status }))
+        };
+        let ok = d(
+            json!({ "replicas": 2 }),
+            json!({ "observedGeneration": 2, "updatedReplicas": 2, "availableReplicas": 2, "readyReplicas": 2 }),
+        );
         assert_eq!((ok.0, ok.2, ok.3), ("Healthy", 2, 2));
         assert_eq!(d(json!({ "replicas": 2 }), json!({ "observedGeneration": 1 })).0, "Progressing");
-        assert_eq!(d(json!({ "replicas": 2 }), json!({ "observedGeneration": 2, "updatedReplicas": 2, "availableReplicas": 1 })).0, "Progressing");
-        let late = d(json!({}), json!({ "observedGeneration": 2, "conditions": [{ "type": "Progressing", "reason": "ProgressDeadlineExceeded", "message": "prazo" }] }));
+        assert_eq!(
+            d(
+                json!({ "replicas": 2 }),
+                json!({ "observedGeneration": 2, "updatedReplicas": 2, "availableReplicas": 1 })
+            )
+            .0,
+            "Progressing"
+        );
+        let late = d(
+            json!({}),
+            json!({ "observedGeneration": 2, "conditions": [{ "type": "Progressing", "reason": "ProgressDeadlineExceeded", "message": "prazo" }] }),
+        );
         assert_eq!((late.0, late.1.as_str()), ("Degraded", "prazo"));
         assert_eq!(d(json!({ "paused": true }), json!({ "observedGeneration": 2 })).0, "Suspended");
-        let ds = workload_health("DaemonSet", &json!({ "status": { "desiredNumberScheduled": 3, "updatedNumberScheduled": 3, "numberAvailable": 3, "numberReady": 3 } }));
+        let ds = workload_health(
+            "DaemonSet",
+            &json!({ "status": { "desiredNumberScheduled": 3, "updatedNumberScheduled": 3, "numberAvailable": 3, "numberReady": 3 } }),
+        );
         assert_eq!(ds.0, "Healthy");
     }
 
@@ -1056,8 +1159,18 @@ mod tests {
     fn link_fills_workload_health() {
         let mut nodes = managed(&app_fixture());
         nodes[2].health.clear(); // Argo CD 3: sem saúde gravada.
-        nodes.push(Node { id: "apps/Deployment/loja/sumiu".into(), kind: "Deployment".into(), namespace: "loja".into(), name: "sumiu".into(), managed: true, ..Node::default() });
-        let deploy = Live { kind: "Deployment", object: json!({ "metadata": { "name": "api", "namespace": "loja" }, "spec": { "replicas": 1 }, "status": { "updatedReplicas": 1, "availableReplicas": 1, "readyReplicas": 1 } }) };
+        nodes.push(Node {
+            id: "apps/Deployment/loja/sumiu".into(),
+            kind: "Deployment".into(),
+            namespace: "loja".into(),
+            name: "sumiu".into(),
+            managed: true,
+            ..Node::default()
+        });
+        let deploy = Live {
+            kind: "Deployment",
+            object: json!({ "metadata": { "name": "api", "namespace": "loja" }, "spec": { "replicas": 1 }, "status": { "updatedReplicas": 1, "availableReplicas": 1, "readyReplicas": 1 } }),
+        };
         let tree = link(nodes, &[deploy]);
         let api = tree.iter().find(|n| n.kind == "Deployment" && n.name == "api").unwrap();
         assert_eq!((api.health.as_str(), api.info.as_slice()), ("Healthy", ["1/1 prontos".to_owned()].as_slice()));
@@ -1077,11 +1190,18 @@ mod tests {
         assert_eq!((ok.status.as_str(), ok.health), ("Running", "Healthy"));
         let starting = pod("Running", json!({ "containerStatuses": [{ "ready": false, "state": { "running": {} } }] }));
         assert_eq!(starting.health, "Progressing");
-        let done = pod("Succeeded", json!({ "containerStatuses": [{ "ready": false, "state": { "terminated": { "reason": "Completed" } } }] }));
+        let done = pod(
+            "Succeeded",
+            json!({ "containerStatuses": [{ "ready": false, "state": { "terminated": { "reason": "Completed" } } }] }),
+        );
         assert_eq!((done.status.as_str(), done.health), ("Succeeded", "Healthy"));
-        let pull = pod("Pending", json!({ "containerStatuses": [{ "ready": false, "state": { "waiting": { "reason": "ImagePullBackOff" } } }] }));
+        let pull = pod(
+            "Pending",
+            json!({ "containerStatuses": [{ "ready": false, "state": { "waiting": { "reason": "ImagePullBackOff" } } }] }),
+        );
         assert_eq!((pull.status.as_str(), pull.health), ("ImagePullBackOff", "Degraded"));
-        let init = pod("Pending", json!({ "initContainerStatuses": [{ "state": { "terminated": { "exitCode": 1 } } }] }));
+        let init =
+            pod("Pending", json!({ "initContainerStatuses": [{ "state": { "terminated": { "exitCode": 1 } } }] }));
         assert_eq!((init.status.as_str(), init.health), ("Init:Error", "Degraded"));
         let evicted = pod("Failed", json!({ "reason": "Evicted" }));
         assert_eq!((evicted.status.as_str(), evicted.health), ("Evicted", "Degraded"));
@@ -1099,7 +1219,12 @@ mod tests {
                 apply_out_of_sync_only: true,
                 server_side: false,
                 replace: false,
-                resources: vec![Target { group: "apps".into(), kind: "Deployment".into(), namespace: "loja".into(), name: "api".into() }],
+                resources: vec![Target {
+                    group: "apps".into(),
+                    kind: "Deployment".into(),
+                    namespace: "loja".into(),
+                    name: "api".into(),
+                }],
             },
         )
         .unwrap();
@@ -1136,17 +1261,28 @@ mod tests {
             replace: false,
             resources: vec![],
         };
-        assert_eq!(operation(&app, sync(false)).unwrap()["sync"]["syncOptions"], json!(["CreateNamespace=true", "ServerSideApply=false"]));
-        assert_eq!(operation(&app, sync(true)).unwrap()["sync"]["syncOptions"], json!(["CreateNamespace=true", "ServerSideApply=true"]));
+        assert_eq!(
+            operation(&app, sync(false)).unwrap()["sync"]["syncOptions"],
+            json!(["CreateNamespace=true", "ServerSideApply=false"])
+        );
+        assert_eq!(
+            operation(&app, sync(true)).unwrap()["sync"]["syncOptions"],
+            json!(["CreateNamespace=true", "ServerSideApply=true"])
+        );
         app["spec"]["syncPolicy"]["automated"] = Value::Null;
-        assert_eq!(operation(&app, Action::Rollback { id: 1, prune: false }).unwrap()["sync"]["syncOptions"], json!(["CreateNamespace=true", "ServerSideApply=false"]));
+        assert_eq!(
+            operation(&app, Action::Rollback { id: 1, prune: false }).unwrap()["sync"]["syncOptions"],
+            json!(["CreateNamespace=true", "ServerSideApply=false"])
+        );
     }
 
     #[test]
     fn action_json() {
-        let a: Action = serde_json::from_value(json!({ "type": "sync", "prune": true, "applyOutOfSyncOnly": true })).unwrap();
+        let a: Action =
+            serde_json::from_value(json!({ "type": "sync", "prune": true, "applyOutOfSyncOnly": true })).unwrap();
         assert!(matches!(a, Action::Sync { prune: true, apply_out_of_sync_only: true, .. }));
-        let a: Action = serde_json::from_value(json!({ "type": "autoSync", "enabled": true, "selfHeal": true })).unwrap();
+        let a: Action =
+            serde_json::from_value(json!({ "type": "autoSync", "enabled": true, "selfHeal": true })).unwrap();
         assert!(matches!(a, Action::AutoSync { enabled: true, self_heal: true, prune: false }));
         let a: Action = serde_json::from_value(json!({ "type": "refresh", "hard": true })).unwrap();
         assert!(matches!(a, Action::Refresh { hard: true }));
@@ -1207,14 +1343,23 @@ mod live {
         let list = apps(&client).await.unwrap();
         println!("{} apps; projetos {:?}", list.apps.len(), list.projects.iter().map(|p| &p.name).collect::<Vec<_>>());
         for a in &list.apps {
-            println!("  {:<22} {:<11} {:<10} {:<11} {:?}", a.name, a.project, a.sync, a.health, a.operation.as_ref().map(|o| &o.phase));
+            println!(
+                "  {:<22} {:<11} {:<10} {:<11} {:?}",
+                a.name,
+                a.project,
+                a.sync,
+                a.health,
+                a.operation.as_ref().map(|o| &o.phase)
+            );
         }
         assert!(list.projects.iter().any(|p| p.name == "web"));
         let errado = list.apps.iter().find(|a| a.name == "caminho-errado").expect("caminho-errado");
         assert!(errado.conditions.iter().any(|c| c.kind == "ComparisonError"), "{:?}", errado.conditions);
 
         // Desliga o auto-sync caso um teste anterior tenha deixado ligado.
-        act(&client, "argocd", "guestbook", Action::AutoSync { enabled: false, prune: false, self_heal: false }).await.unwrap();
+        act(&client, "argocd", "guestbook", Action::AutoSync { enabled: false, prune: false, self_heal: false })
+            .await
+            .unwrap();
         act(&client, "argocd", "guestbook", Action::Refresh { hard: false }).await.unwrap();
         let d = until(&client, "sem operação", |d| !d.app.busy && d.app.sync != "Unknown").await;
         println!("antes: {} / {} · {} recursos", d.app.sync, d.app.health, d.nodes.len());
@@ -1232,13 +1377,22 @@ mod live {
         act(&client, "argocd", "guestbook", sync(Vec::new())).await.unwrap();
         let err = act(&client, "argocd", "guestbook", sync(Vec::new())).await.unwrap_err();
         assert!(err.contains("andamento"), "{err}");
-        let d = until(&client, "Synced e Healthy", |d| !d.app.busy && d.app.sync == "Synced" && d.app.health == "Healthy").await;
+        let d =
+            until(&client, "Synced e Healthy", |d| !d.app.busy && d.app.sync == "Synced" && d.app.health == "Healthy")
+                .await;
         let op = d.app.operation.as_ref().unwrap();
         assert_eq!((op.phase.as_str(), op.initiated_by.as_str()), ("Succeeded", INITIATOR));
 
         // Árvore: Deployment → ReplicaSet → Pod, todos com caminho para abrir o YAML.
         for n in &d.nodes {
-            println!("  {:<40} pai={:<45} {:<9} {:<8} {:?}", format!("{}/{}", n.kind, n.name), n.parent, n.sync, n.health, n.info);
+            println!(
+                "  {:<40} pai={:<45} {:<9} {:<8} {:?}",
+                format!("{}/{}", n.kind, n.name),
+                n.parent,
+                n.sync,
+                n.health,
+                n.info
+            );
         }
         let deploy = d.nodes.iter().find(|n| n.kind == "Deployment").expect("deployment");
         let rs = d.nodes.iter().find(|n| n.kind == "ReplicaSet" && n.parent == deploy.id).expect("replicaset");
@@ -1249,29 +1403,42 @@ mod live {
         assert!(!d.history.is_empty());
 
         // Sync de um recurso só.
-        let service = Target { group: "".into(), kind: "Service".into(), namespace: deploy.namespace.clone(), name: "guestbook-ui".into() };
-        act(&client, "argocd", "guestbook", sync(vec![service]))
-            .await
-            .unwrap();
+        let service = Target {
+            group: "".into(),
+            kind: "Service".into(),
+            namespace: deploy.namespace.clone(),
+            name: "guestbook-ui".into(),
+        };
+        act(&client, "argocd", "guestbook", sync(vec![service])).await.unwrap();
         // Sync parcial não entra no histórico: espera a operação nova terminar.
         let before = d.app.operation.as_ref().map(|o| o.started_at.clone()).unwrap_or_default();
-        let d = until(&client, "sync do Service", |d| !d.app.busy && d.app.operation.as_ref().is_some_and(|o| o.started_at != before)).await;
+        let d = until(&client, "sync do Service", |d| {
+            !d.app.busy && d.app.operation.as_ref().is_some_and(|o| o.started_at != before)
+        })
+        .await;
         assert_eq!(d.app.operation.as_ref().unwrap().phase, "Succeeded");
 
         // Rollback: recusado com auto-sync, aceito sem.
-        act(&client, "argocd", "guestbook", Action::AutoSync { enabled: true, prune: false, self_heal: false }).await.unwrap();
+        act(&client, "argocd", "guestbook", Action::AutoSync { enabled: true, prune: false, self_heal: false })
+            .await
+            .unwrap();
         let first = d.history.last().unwrap().id;
         let err = act(&client, "argocd", "guestbook", Action::Rollback { id: first, prune: false }).await.unwrap_err();
         assert!(err.contains("auto-sync"), "{err}");
         let auto = until(&client, "auto-sync ligado", |d| d.app.auto_sync).await;
         assert!(!auto.app.prune);
-        act(&client, "argocd", "guestbook", Action::AutoSync { enabled: false, prune: false, self_heal: false }).await.unwrap();
+        act(&client, "argocd", "guestbook", Action::AutoSync { enabled: false, prune: false, self_heal: false })
+            .await
+            .unwrap();
         until(&client, "auto-sync desligado", |d| !d.app.auto_sync && !d.app.busy).await;
         act(&client, "argocd", "guestbook", Action::Rollback { id: first, prune: false }).await.unwrap();
         let count = d.history.len();
         let d = until(&client, "rollback concluído", |d| !d.app.busy && d.history.len() > count).await;
         assert_eq!(d.app.operation.as_ref().unwrap().phase, "Succeeded");
-        println!("histórico: {:?}", d.history.iter().map(|h| (h.id, &h.revisions[0], &h.initiated_by)).collect::<Vec<_>>());
+        println!(
+            "histórico: {:?}",
+            d.history.iter().map(|h| (h.id, &h.revisions[0], &h.initiated_by)).collect::<Vec<_>>()
+        );
 
         // Encerrar sem operação rodando.
         let err = act(&client, "argocd", "guestbook", Action::Terminate).await.unwrap_err();

@@ -14,8 +14,8 @@ mod rdp_clipboard;
 mod session;
 mod sftp;
 mod shells;
-mod sshconfig;
 mod ssh;
+mod sshconfig;
 mod tunnel;
 mod vault;
 

@@ -54,10 +54,7 @@ fn detect() -> Vec<ShellProfile> {
     list.push(profile("cmd", "Prompt de Comando", "cmd", "cmd.exe", &[]));
 
     // `wsl -l -q` responde em UTF-16LE.
-    if let Ok(out) = std::process::Command::new("wsl.exe")
-        .args(["-l", "-q"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
+    if let Ok(out) = std::process::Command::new("wsl.exe").args(["-l", "-q"]).creation_flags(CREATE_NO_WINDOW).output()
     {
         let utf16: Vec<u16> = out.stdout.as_chunks::<2>().0.iter().map(|&b| u16::from_le_bytes(b)).collect();
         for distro in String::from_utf16_lossy(&utf16).lines() {
@@ -97,7 +94,8 @@ fn detect() -> Vec<ShellProfile> {
         .filter_map(|p| {
             let name = p.rsplit('/').next()?.to_string();
             // Evita duplicatas tipo /bin/bash e /usr/bin/bash.
-            if !["bash", "zsh", "fish", "sh", "nu", "pwsh"].contains(&name.as_str()) || !seen_names.insert(name.clone()) {
+            if !["bash", "zsh", "fish", "sh", "nu", "pwsh"].contains(&name.as_str()) || !seen_names.insert(name.clone())
+            {
                 return None;
             }
             Some(profile(&name, &name, "unix", &p, &["-l"]))

@@ -137,7 +137,8 @@ pub async fn rdp_connect(
     let host = &route.last().ok_or_else(|| Failure::other(&host_id, "host não encontrado"))?.0;
     let endpoint = format!("{}:{}", host.hostname, host.port);
     let id = sessions.next_id();
-    let (session, new_cert) = rdp::connect(app, id, &route, &options, vault.rdp_cert(&endpoint), width, height, on_frame, on_exit).await?;
+    let (session, new_cert) =
+        rdp::connect(app, id, &route, &options, vault.rdp_cert(&endpoint), width, height, on_frame, on_exit).await?;
     sessions.insert(id, Arc::new(session));
     if let Some(fingerprint) = new_cert {
         let _ = vault.trust_rdp_cert(&endpoint, &fingerprint);
@@ -235,7 +236,11 @@ pub fn credentials_list(vault: State<'_, Vault>) -> Vec<CredentialView> {
 }
 
 #[tauri::command]
-pub fn credential_save(vault: State<'_, Vault>, credential: Credential, secrets: SecretUpdate) -> Result<Credential, String> {
+pub fn credential_save(
+    vault: State<'_, Vault>,
+    credential: Credential,
+    secrets: SecretUpdate,
+) -> Result<Credential, String> {
     vault.save_credential(credential, secrets)
 }
 
@@ -246,7 +251,11 @@ pub fn credential_delete(vault: State<'_, Vault>, id: String) -> Result<(), Stri
 
 /// Gera um par de chaves ed25519 guardado no cofre, numa credencial nova.
 #[tauri::command]
-pub fn credential_generate_key(vault: State<'_, Vault>, label: String, username: String) -> Result<CredentialView, String> {
+pub fn credential_generate_key(
+    vault: State<'_, Vault>,
+    label: String,
+    username: String,
+) -> Result<CredentialView, String> {
     vault.generate_key_credential(label, username)
 }
 
@@ -302,7 +311,12 @@ pub fn session_write(sessions: State<'_, SessionManager>, ids: Vec<u32>, data: S
 /// Várias sessões quando o broadcast está ligado. A senha vai do cofre direto para as
 /// sessões: nunca passa pelo frontend.
 #[tauri::command]
-pub fn session_send_secret(sessions: State<'_, SessionManager>, vault: State<'_, Vault>, ids: Vec<u32>, host_id: String) -> Result<(), String> {
+pub fn session_send_secret(
+    sessions: State<'_, SessionManager>,
+    vault: State<'_, Vault>,
+    ids: Vec<u32>,
+    host_id: String,
+) -> Result<(), String> {
     let (_, secret) = vault.host(&host_id).ok_or("host não encontrado")?;
     let password = secret.password.ok_or("este host não tem senha salva")?;
     let mut data = password.into_bytes();
@@ -371,13 +385,20 @@ pub struct Sudo {
 }
 
 /// Roda um script do Docker onde está o terminal `id`, direto ou via sudo.
-async fn run_docker(sessions: &SessionManager, vault: &Vault, id: u32, script: &str, sudo: Option<Sudo>) -> Result<String, docker::Error> {
+async fn run_docker(
+    sessions: &SessionManager,
+    vault: &Vault,
+    id: u32,
+    script: &str,
+    sudo: Option<Sudo>,
+) -> Result<String, docker::Error> {
     let typed = sudo.as_ref().and_then(|s| s.password.clone());
     let host_id = sudo.as_ref().and_then(|s| s.host_id.clone());
     let password = typed.clone().or_else(|| vault.host(host_id.as_deref()?)?.1.password);
     let command = docker::with_sudo(script, sudo.is_some(), password.is_some());
     let input = password.map(|p| format!("{p}\n"));
-    let out = run_on(sessions, id, &command, input.as_deref().map(str::as_bytes)).await.map_err(docker::Error::other)?;
+    let out =
+        run_on(sessions, id, &command, input.as_deref().map(str::as_bytes)).await.map_err(docker::Error::other)?;
     if out.status != Some(0) {
         return Err(docker::describe_error(out.status, &out.stderr()));
     }
@@ -538,7 +559,12 @@ pub fn tunnels_list(vault: State<'_, Vault>) -> Vec<Tunnel> {
 }
 
 #[tauri::command]
-pub fn tunnel_save(app: AppHandle, vault: State<'_, Vault>, tunnels: State<'_, Tunnels>, tunnel: Tunnel) -> Result<Tunnel, String> {
+pub fn tunnel_save(
+    app: AppHandle,
+    vault: State<'_, Vault>,
+    tunnels: State<'_, Tunnels>,
+    tunnel: Tunnel,
+) -> Result<Tunnel, String> {
     if tunnel.bind_port == 0 && tunnel.kind != tunnel::TunnelKind::Remote {
         return Err("informe a porta local".into());
     }
@@ -551,7 +577,12 @@ pub fn tunnel_save(app: AppHandle, vault: State<'_, Vault>, tunnels: State<'_, T
 }
 
 #[tauri::command]
-pub fn tunnel_delete(app: AppHandle, vault: State<'_, Vault>, tunnels: State<'_, Tunnels>, id: String) -> Result<(), String> {
+pub fn tunnel_delete(
+    app: AppHandle,
+    vault: State<'_, Vault>,
+    tunnels: State<'_, Tunnels>,
+    id: String,
+) -> Result<(), String> {
     tunnels.stop(&app, &id);
     vault.delete_tunnel(&id)
 }
@@ -594,7 +625,11 @@ pub async fn k8s_contexts(kube: State<'_, Kube>, kubeconfig: Option<String>) -> 
 }
 
 #[tauri::command]
-pub async fn k8s_namespaces(kube: State<'_, Kube>, kubeconfig: Option<String>, context: String) -> Result<Vec<String>, String> {
+pub async fn k8s_namespaces(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+) -> Result<Vec<String>, String> {
     let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
     k8s::namespaces(&client).await
 }
@@ -756,21 +791,37 @@ pub async fn k8s_metrics(
 }
 
 #[tauri::command]
-pub async fn k8s_custom_resources(kube: State<'_, Kube>, kubeconfig: Option<String>, context: String) -> Result<Vec<k8s::CustomInfo>, String> {
+pub async fn k8s_custom_resources(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+) -> Result<Vec<k8s::CustomInfo>, String> {
     let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
     k8s::custom_resources(&client).await
 }
 
 /// Um SealedSecret aberto para editar (com os valores atuais, se der para ler o Secret).
 #[tauri::command]
-pub async fn k8s_sealed(kube: State<'_, Kube>, kubeconfig: Option<String>, context: String, namespace: String, name: String) -> Result<k8s_seal::Sealed, String> {
+pub async fn k8s_sealed(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+    namespace: String,
+    name: String,
+) -> Result<k8s_seal::Sealed, String> {
     let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
     k8s_seal::sealed(&client, &namespace, &name).await
 }
 
 /// Os valores de um Secret comum, para selá-lo.
 #[tauri::command]
-pub async fn k8s_secret_plain(kube: State<'_, Kube>, kubeconfig: Option<String>, context: String, namespace: String, name: String) -> Result<k8s_seal::Plain, String> {
+pub async fn k8s_secret_plain(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+    namespace: String,
+    name: String,
+) -> Result<k8s_seal::Plain, String> {
     let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
     k8s_seal::plain(&client, &namespace, &name).await
 }
@@ -778,7 +829,13 @@ pub async fn k8s_secret_plain(kube: State<'_, Kube>, kubeconfig: Option<String>,
 /// Sela com o certificado do controller do cluster e devolve o YAML do SealedSecret (salvo no
 /// cluster se `apply`). `file`: grava também o YAML nesse arquivo (escolhido no diálogo).
 #[tauri::command]
-pub async fn k8s_seal(kube: State<'_, Kube>, kubeconfig: Option<String>, context: String, request: k8s_seal::Request, file: Option<String>) -> Result<String, String> {
+pub async fn k8s_seal(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+    request: k8s_seal::Request,
+    file: Option<String>,
+) -> Result<String, String> {
     let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
     let yaml = k8s_seal::save(&client, &request).await?;
     if let Some(path) = file {
@@ -789,14 +846,24 @@ pub async fn k8s_seal(kube: State<'_, Kube>, kubeconfig: Option<String>, context
 
 /// Argo CD: os Applications do cluster, com os projetos e a URL da interface web.
 #[tauri::command]
-pub async fn k8s_argo_apps(kube: State<'_, Kube>, kubeconfig: Option<String>, context: String) -> Result<k8s_argo::Apps, String> {
+pub async fn k8s_argo_apps(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+) -> Result<k8s_argo::Apps, String> {
     let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
     k8s_argo::apps(&client).await
 }
 
 /// Um Application: a árvore de recursos (gerenciados e o que o cluster criou) e o histórico.
 #[tauri::command]
-pub async fn k8s_argo_app(kube: State<'_, Kube>, kubeconfig: Option<String>, context: String, namespace: String, name: String) -> Result<k8s_argo::Detail, String> {
+pub async fn k8s_argo_app(
+    kube: State<'_, Kube>,
+    kubeconfig: Option<String>,
+    context: String,
+    namespace: String,
+    name: String,
+) -> Result<k8s_argo::Detail, String> {
     let client = kube.client(self::kubeconfig(&kubeconfig), &context).await?;
     k8s_argo::app(&client, &namespace, &name).await
 }

@@ -28,14 +28,29 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ConnectError {
-    UnknownHost { fingerprint: String, key_type: String },
-    HostKeyChanged { fingerprint: String, key_type: String, line: usize },
+    UnknownHost {
+        fingerprint: String,
+        key_type: String,
+    },
+    HostKeyChanged {
+        fingerprint: String,
+        key_type: String,
+        line: usize,
+    },
     /// Certificado TLS de um servidor RDP diferente do confiado antes.
-    CertChanged { fingerprint: String },
+    CertChanged {
+        fingerprint: String,
+    },
     NeedPassword,
-    NeedPassphrase { key_path: String },
-    AuthFailed { message: String },
-    Other { message: String },
+    NeedPassphrase {
+        key_path: String,
+    },
+    AuthFailed {
+        message: String,
+    },
+    Other {
+        message: String,
+    },
 }
 
 impl ConnectError {
@@ -99,11 +114,13 @@ impl SshSession {
         if let Some(sftp) = slot.as_ref() {
             return Ok(sftp.clone());
         }
-        let channel = self.conn.handle.channel_open_session().await.map_err(|e| format!("não foi possível abrir o canal SFTP: {e}"))?;
-        channel
-            .request_subsystem(true, "sftp")
+        let channel = self
+            .conn
+            .handle
+            .channel_open_session()
             .await
-            .map_err(|e| format!("o servidor recusou o SFTP: {e}"))?;
+            .map_err(|e| format!("não foi possível abrir o canal SFTP: {e}"))?;
+        channel.request_subsystem(true, "sftp").await.map_err(|e| format!("o servidor recusou o SFTP: {e}"))?;
         let sftp = SftpSession::new(channel.into_stream())
             .await
             .map_err(|e| format!("o servidor não respondeu ao SFTP: {e}"))?;
@@ -226,7 +243,11 @@ impl Connection {
     /// Como um `run`, mandando `input` na entrada do comando (ex.: a senha para `sudo -S`).
     pub async fn run_with_input(&self, command: &str, input: Option<&[u8]>) -> Result<Output, String> {
         let collect = async {
-            let mut channel = self.handle.channel_open_session().await.map_err(|e| format!("não foi possível abrir um canal: {e}"))?;
+            let mut channel = self
+                .handle
+                .channel_open_session()
+                .await
+                .map_err(|e| format!("não foi possível abrir um canal: {e}"))?;
             channel.exec(true, command).await.map_err(|e| format!("o servidor recusou o comando: {e}"))?;
             if let Some(input) = input {
                 channel.data(input).await.map_err(|e| format!("não foi possível enviar a entrada: {e}"))?;
@@ -412,10 +433,15 @@ pub async fn establish(route: &[(Host, Secret)], opts: &Options) -> Result<Conne
         let attempt = async {
             match jumps.last() {
                 None => {
-                    let socket = tokio::time::timeout(CONNECT_TIMEOUT, tokio::net::TcpStream::connect((host.hostname.as_str(), host.port)))
-                        .await
-                        .map_err(|_| ConnectError::other(format!("tempo esgotado conectando em {}:{}", host.hostname, host.port)))?
-                        .map_err(|e| ConnectError::other(format!("{}:{} — {e}", host.hostname, host.port)))?;
+                    let socket = tokio::time::timeout(
+                        CONNECT_TIMEOUT,
+                        tokio::net::TcpStream::connect((host.hostname.as_str(), host.port)),
+                    )
+                    .await
+                    .map_err(|_| {
+                        ConnectError::other(format!("tempo esgotado conectando em {}:{}", host.hostname, host.port))
+                    })?
+                    .map_err(|e| ConnectError::other(format!("{}:{} — {e}", host.hostname, host.port)))?;
                     // Sem Nagle: cada tecla sai imediatamente, sem esperar juntar pacote.
                     let _ = socket.set_nodelay(true);
                     handshake(socket, host, secret, host_opts).await
@@ -426,14 +452,23 @@ pub async fn establish(route: &[(Host, Secret)], opts: &Options) -> Result<Conne
                         jump.channel_open_direct_tcpip(host.hostname.clone(), host.port.into(), "127.0.0.1", 0),
                     )
                     .await
-                    .map_err(|_| ConnectError::other(format!("tempo esgotado: o jump host não alcançou {}:{}", host.hostname, host.port)))?
-                    .map_err(|e| ConnectError::other(format!("o jump host não alcançou {}:{} — {e}", host.hostname, host.port)))?;
+                    .map_err(|_| {
+                        ConnectError::other(format!(
+                            "tempo esgotado: o jump host não alcançou {}:{}",
+                            host.hostname, host.port
+                        ))
+                    })?
+                    .map_err(|e| {
+                        ConnectError::other(format!("o jump host não alcançou {}:{} — {e}", host.hostname, host.port))
+                    })?;
                     handshake(channel.into_stream(), host, secret, host_opts).await
                 }
             }
         };
         match attempt.await {
-            Ok((handle, forwards)) if i + 1 == route.len() => return Ok(Connection { handle, forwards, jumps, users: AtomicUsize::new(1) }),
+            Ok((handle, forwards)) if i + 1 == route.len() => {
+                return Ok(Connection { handle, forwards, jumps, users: AtomicUsize::new(1) })
+            }
             Ok((handle, _)) => jumps.push(handle),
             Err(error) => {
                 for jump in jumps.iter().rev() {
@@ -447,7 +482,12 @@ pub async fn establish(route: &[(Host, Secret)], opts: &Options) -> Result<Conne
 }
 
 /// Handshake SSH + autenticação sobre um stream já aberto (TCP ou canal de um jump host).
-async fn handshake<S>(stream: S, host: &Host, secret: &Secret, opts: &ConnectOptions) -> Result<(client::Handle<Client>, Forwards), ConnectError>
+async fn handshake<S>(
+    stream: S,
+    host: &Host,
+    secret: &Secret,
+    opts: &ConnectOptions,
+) -> Result<(client::Handle<Client>, Forwards), ConnectError>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
@@ -466,10 +506,13 @@ where
         problem: problem.clone(),
         forwards: forwards.clone(),
     };
-    let mut handle = match tokio::time::timeout(CONNECT_TIMEOUT, client::connect_stream(config, stream, handler)).await {
+    let mut handle = match tokio::time::timeout(CONNECT_TIMEOUT, client::connect_stream(config, stream, handler)).await
+    {
         Ok(Ok(handle)) => handle,
         Ok(Err(e)) => return Err(problem.lock().unwrap().take().unwrap_or_else(|| ConnectError::other(e))),
-        Err(_) => return Err(ConnectError::other(format!("{}:{} não respondeu ao handshake SSH", host.hostname, host.port))),
+        Err(_) => {
+            return Err(ConnectError::other(format!("{}:{} não respondeu ao handshake SSH", host.hostname, host.port)))
+        }
     };
     if let Err(e) = authenticate(&mut handle, host, secret, opts).await {
         let _ = handle.disconnect(Disconnect::ByApplication, "", "pt-BR").await;
@@ -521,7 +564,8 @@ async fn authenticate(
     let user = host.username.as_str();
     match host.auth {
         AuthMethod::Password => {
-            let password = opts.password.clone().or_else(|| secret.password.clone()).ok_or(ConnectError::NeedPassword)?;
+            let password =
+                opts.password.clone().or_else(|| secret.password.clone()).ok_or(ConnectError::NeedPassword)?;
             let result = handle.authenticate_password(user, password.clone()).await.map_err(ConnectError::other)?;
             if result.success() {
                 return Ok(());
@@ -536,7 +580,9 @@ async fn authenticate(
             let rsa_hash = handle.best_supported_rsa_hash().await.ok().flatten().flatten();
             match with_agent(handle, user, rsa_hash).await? {
                 Some(true) => Ok(()),
-                Some(false) => Err(ConnectError::AuthFailed { message: format!("nenhuma chave do agente foi aceita por {user}@{}", host.hostname) }),
+                Some(false) => Err(ConnectError::AuthFailed {
+                    message: format!("nenhuma chave do agente foi aceita por {user}@{}", host.hostname),
+                }),
                 None => Err(ConnectError::other(NO_AGENT)),
             }
         }
@@ -548,7 +594,9 @@ async fn authenticate(
                 const VAULT_KEY: &str = "chave guardada no cofre";
                 let key = match keys::decode_secret_key(pem.trim(), passphrase.as_deref()) {
                     Ok(key) => key,
-                    Err(keys::Error::KeyIsEncrypted) => return Err(ConnectError::NeedPassphrase { key_path: VAULT_KEY.into() }),
+                    Err(keys::Error::KeyIsEncrypted) => {
+                        return Err(ConnectError::NeedPassphrase { key_path: VAULT_KEY.into() })
+                    }
                     Err(e) if passphrase.is_some() && is_bad_passphrase(&e) => {
                         return Err(ConnectError::NeedPassphrase { key_path: VAULT_KEY.into() });
                     }
@@ -558,7 +606,9 @@ async fn authenticate(
                 if handle.authenticate_publickey(user, key).await.map_err(ConnectError::other)?.success() {
                     return Ok(());
                 }
-                return Err(ConnectError::AuthFailed { message: format!("chave recusada para {user}@{}", host.hostname) });
+                return Err(ConnectError::AuthFailed {
+                    message: format!("chave recusada para {user}@{}", host.hostname),
+                });
             }
             let explicit = !host.key_path.trim().is_empty();
             let paths = if explicit { vec![expand_home(&host.key_path)] } else { default_keys() };
@@ -584,7 +634,9 @@ async fn authenticate(
                 match with_agent(handle, user, rsa_hash).await? {
                     Some(true) => return Ok(()),
                     None if paths.is_empty() => {
-                        return Err(ConnectError::other(format!("nenhuma chave em ~/.ssh (id_ed25519, id_ecdsa, id_rsa) e {NO_AGENT}")));
+                        return Err(ConnectError::other(format!(
+                            "nenhuma chave em ~/.ssh (id_ed25519, id_ecdsa, id_rsa) e {NO_AGENT}"
+                        )));
                     }
                     _ => {}
                 }
@@ -621,7 +673,11 @@ async fn connect_agent() -> Option<Agent> {
 }
 
 /// Tenta cada chave do agente. None = não há agente; Some(aceito?).
-async fn with_agent(handle: &mut client::Handle<Client>, user: &str, rsa_hash: Option<HashAlg>) -> Result<Option<bool>, ConnectError> {
+async fn with_agent(
+    handle: &mut client::Handle<Client>,
+    user: &str,
+    rsa_hash: Option<HashAlg>,
+) -> Result<Option<bool>, ConnectError> {
     let Some(mut agent) = connect_agent().await else { return Ok(None) };
     let identities = agent.request_identities().await.map_err(|e| ConnectError::other(format!("agente SSH: {e}")))?;
     for identity in identities {
@@ -642,7 +698,11 @@ async fn with_agent(handle: &mut client::Handle<Client>, user: &str, rsa_hash: O
     Ok(Some(false))
 }
 
-async fn keyboard_interactive(handle: &mut client::Handle<Client>, user: &str, password: &str) -> Result<bool, ConnectError> {
+async fn keyboard_interactive(
+    handle: &mut client::Handle<Client>,
+    user: &str,
+    password: &str,
+) -> Result<bool, ConnectError> {
     let mut reply = handle.authenticate_keyboard_interactive_start(user, None).await.map_err(ConnectError::other)?;
     // Limite de rodadas para não ficar preso num servidor que pede infinitamente.
     for _ in 0..5 {
@@ -650,7 +710,8 @@ async fn keyboard_interactive(handle: &mut client::Handle<Client>, user: &str, p
             KeyboardInteractiveAuthResponse::Success => return Ok(true),
             KeyboardInteractiveAuthResponse::Failure { .. } => return Ok(false),
             KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
-                let answers = prompts.iter().map(|p| if p.echo { String::new() } else { password.to_string() }).collect();
+                let answers =
+                    prompts.iter().map(|p| if p.echo { String::new() } else { password.to_string() }).collect();
                 reply = handle.authenticate_keyboard_interactive_respond(answers).await.map_err(ConnectError::other)?;
             }
         }
@@ -678,7 +739,6 @@ fn default_keys() -> Vec<PathBuf> {
     let Some(ssh) = home_dir().map(|h| h.join(".ssh")) else { return vec![] };
     ["id_ed25519", "id_ecdsa", "id_rsa"].iter().map(|n| ssh.join(n)).filter(|p| p.is_file()).collect()
 }
-
 
 /// Contra o container openssh dos outros testes (porta 2222 ou `NEXO_SSH_PORT`):
 /// `cargo test -- --ignored live_vault_key`.
@@ -709,7 +769,10 @@ mod live {
         let key = keys::PrivateKey::from(keys::ssh_key::private::Ed25519Keypair::from_seed(&seed));
         let public = key.public_key().to_openssh().unwrap();
         let script = format!("grep -qF '{public}' /config/.ssh/authorized_keys 2>/dev/null || echo '{public}' >> /config/.ssh/authorized_keys");
-        let ok = std::process::Command::new("wsl").args(["docker", "exec", "nexo-ssh", "sh", "-c", &script]).status().unwrap();
+        let ok = std::process::Command::new("wsl")
+            .args(["docker", "exec", "nexo-ssh", "sh", "-c", &script])
+            .status()
+            .unwrap();
         assert!(ok.success(), "não foi possível instalar a chave no container");
 
         let host = Host {
@@ -720,7 +783,10 @@ mod live {
             auth: AuthMethod::Key,
             ..Default::default()
         };
-        let secret = Secret { private_key: Some(key.to_openssh(keys::ssh_key::LineEnding::LF).unwrap().to_string()), ..Default::default() };
+        let secret = Secret {
+            private_key: Some(key.to_openssh(keys::ssh_key::LineEnding::LF).unwrap().to_string()),
+            ..Default::default()
+        };
         let route = vec![(host, secret)];
         let mut opts = Options::new();
         let conn = loop {

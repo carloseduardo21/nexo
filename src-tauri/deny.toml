@@ -1,0 +1,71 @@
+# cargo-deny: `cargo deny check` (o CI roda em .github/workflows/security.yml).
+# O Nexo é GPL-3.0-or-later: só entram dependências com licenças compatíveis com ela.
+
+[graph]
+# Os alvos dos instaladores: avalia só as dependências que entram neles.
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+]
+all-features = false
+
+[advisories]
+# Vulnerabilidades sempre falham. Crates sem manutenção ou com versões retiradas também, a não
+# ser que estejam listadas em `ignore` com o motivo.
+unmaintained = "all"
+yanked = "deny"
+# Cada exceção diz por que e quando sai. Mantenha em sincronia com .cargo/audit.toml.
+ignore = [
+    # rsa (Marvin Attack): sem versão corrigida. Usamos RSA para cifrar com a chave pública do
+    # Sealed Secrets (não afetado) e, via russh e IronRDP/picky, para assinar localmente na
+    # autenticação; o ataque exige medir o tempo de muitas operações de decifra com a chave.
+    { id = "RUSTSEC-2023-0071", reason = "sem correção; uso local, ver comentário" },
+    # zip 4.x (extração com symlinks/permissões): vem do tauri-plugin-updater 2.14, que só
+    # extrai pacotes de atualização já conferidos com a nossa chave (minisign). Sai quando o
+    # plugin subir para zip >= 9.
+    { id = "RUSTSEC-2026-0367", reason = "zip do tauri-plugin-updater; pacote assinado" },
+    { id = "RUSTSEC-2026-0368", reason = "zip do tauri-plugin-updater; pacote assinado" },
+    { id = "RUSTSEC-2026-0369", reason = "zip do tauri-plugin-updater; pacote assinado" },
+    { id = "RUSTSEC-2026-0429", reason = "zip do tauri-plugin-updater; pacote assinado" },
+    # Sem manutenção e sem substituto, só no Linux: gtk-rs 0.18 (proc-macro-error), usado pelo
+    # Tauri, e zbus/zvariant, usados pelo keyring e pelo tauri-plugin-opener.
+    { id = "RUSTSEC-2024-0370", reason = "transitiva do gtk-rs 0.18 (Tauri)" },
+    { id = "RUSTSEC-2026-0370", reason = "transitiva do zbus (keyring, opener)" },
+    { id = "RUSTSEC-2026-0371", reason = "transitiva do zbus (keyring, opener)" },
+    { id = "RUSTSEC-2026-0372", reason = "transitiva do zbus (keyring, opener)" },
+]
+
+[licenses]
+# Licenças compatíveis com a GPL-3.0 (lista da FSF). Antes de incluir outra, confira em
+# https://www.gnu.org/licenses/license-list.html.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "CC0-1.0",
+    "Unlicense",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "GPL-3.0-or-later",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+# Só o crates.io: nada de git ou registros desconhecidos.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

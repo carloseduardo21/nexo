@@ -101,7 +101,9 @@ impl Tunnels {
         let setup = async {
             // Escuta antes de conectar: porta ocupada aparece na hora, sem esperar o SSH.
             let listener = match tunnel.kind {
-                TunnelKind::Local | TunnelKind::Dynamic => Some(bind(&tunnel).await.map_err(|error| Failure { host_id: tunnel.host_id.clone(), error })?),
+                TunnelKind::Local | TunnelKind::Dynamic => {
+                    Some(bind(&tunnel).await.map_err(|error| Failure { host_id: tunnel.host_id.clone(), error })?)
+                }
                 TunnelKind::Remote => None,
             };
             let conn = ssh::establish(&route, &opts).await?;
@@ -263,7 +265,13 @@ async fn forward_remote(conn: &Connection, tunnel: &Tunnel) -> Result<(), String
 }
 
 /// Atende conexões até pedirem para parar (true) ou a conexão SSH cair (false).
-async fn serve(rep: &Reporter, tunnel: &Tunnel, listener: Option<&TcpListener>, conn: &Arc<Connection>, stop: &mut watch::Receiver<bool>) -> bool {
+async fn serve(
+    rep: &Reporter,
+    tunnel: &Tunnel,
+    listener: Option<&TcpListener>,
+    conn: &Arc<Connection>,
+    stop: &mut watch::Receiver<bool>,
+) -> bool {
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     let open = Arc::new(AtomicUsize::new(0));
     loop {
@@ -297,7 +305,13 @@ async fn accept(listener: Option<&TcpListener>) -> std::io::Result<(TcpStream, S
     }
 }
 
-async fn forward_local(conn: &Connection, mut socket: TcpStream, peer: SocketAddr, host: &str, port: u16) -> std::io::Result<()> {
+async fn forward_local(
+    conn: &Connection,
+    mut socket: TcpStream,
+    peer: SocketAddr,
+    host: &str,
+    port: u16,
+) -> std::io::Result<()> {
     let channel = conn
         .handle
         .channel_open_direct_tcpip(host, port.into(), peer.ip().to_string(), peer.port().into())

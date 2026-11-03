@@ -24,7 +24,9 @@ const SHELL: &str = "command -v bash >/dev/null && exec bash || exec sh";
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Mode {
     /// `previous`: do container anterior (o que reiniciou).
-    Logs { previous: bool },
+    Logs {
+        previous: bool,
+    },
     Shell,
 }
 
@@ -41,9 +43,7 @@ pub struct KubeTerm {
 
 impl Session for KubeTerm {
     fn write(&self, data: &[u8]) -> std::io::Result<()> {
-        self.input
-            .send(Input::Data(data.to_vec()))
-            .map_err(|_| std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+        self.input.send(Input::Data(data.to_vec())).map_err(|_| std::io::Error::from(std::io::ErrorKind::BrokenPipe))
     }
 
     fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {

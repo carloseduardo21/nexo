@@ -10,7 +10,9 @@ use std::time::Duration;
 
 use ironrdp_connector::connection_activation::ConnectionActivationState;
 use ironrdp_connector::sspi::generator::NetworkRequest;
-use ironrdp_connector::{ClientConnector, ConnectionResult, ConnectorErrorKind, ConnectorResult, Credentials, DesktopSize};
+use ironrdp_connector::{
+    ClientConnector, ConnectionResult, ConnectorErrorKind, ConnectorResult, Credentials, DesktopSize,
+};
 use ironrdp_core::WriteBuf;
 use ironrdp_displaycontrol::client::DisplayControlClient;
 use ironrdp_displaycontrol::pdu::MonitorLayoutEntry;
@@ -19,11 +21,11 @@ use ironrdp_egfx::decode::{H264Decoder, OpenH264Decoder};
 use ironrdp_graphics::image_processing::PixelFormat;
 use ironrdp_graphics::pointer::DecodedPointer;
 use ironrdp_input::{Database, MouseButton, MousePosition, Operation, Scancode, WheelRotations};
-use ironrdp_pdu::geometry::{InclusiveRectangle, Rectangle as _};
 use ironrdp_pdu::gcc::KeyboardType;
+use ironrdp_pdu::geometry::{InclusiveRectangle, Rectangle as _};
 use ironrdp_pdu::mcs::{DisconnectProviderUltimatum, DisconnectReason, McsMessage};
-use ironrdp_pdu::x224::X224;
 use ironrdp_pdu::rdp::capability_sets::{client_codecs_capabilities, MajorPlatformType, RailSupportLevel};
+use ironrdp_pdu::x224::X224;
 use ironrdp_session::image::DecodedImage;
 use ironrdp_session::{ActiveStage, ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason};
 use ironrdp_tokio::{single_sequence_step_read, split_tokio_framed, FramedWrite as _, TokioFramed};
@@ -63,15 +65,34 @@ type Framed = TokioFramed<Box<dyn Stream>>;
 #[derive(Debug, Deserialize)]
 #[serde(tag = "t", rename_all = "camelCase")]
 pub enum Input {
-    Key { code: u16, down: bool },
+    Key {
+        code: u16,
+        down: bool,
+    },
     /// Caractere sem scancode conhecido (ex.: colar texto, teclas de IME).
-    Unicode { ch: char, down: bool },
-    Move { x: u16, y: u16 },
+    Unicode {
+        ch: char,
+        down: bool,
+    },
+    Move {
+        x: u16,
+        y: u16,
+    },
     /// Índice de botão do DOM (`MouseEvent.button`): 0 esquerdo, 1 meio, 2 direito, 3/4 laterais.
-    Button { button: u8, down: bool },
-    Wheel { delta: i16, vertical: bool },
+    Button {
+        button: u8,
+        down: bool,
+    },
+    Wheel {
+        delta: i16,
+        vertical: bool,
+    },
     /// Estado das teclas de trava (ao ganhar o foco).
-    Sync { caps: bool, num: bool, scroll: bool },
+    Sync {
+        caps: bool,
+        num: bool,
+        scroll: bool,
+    },
     /// Solta tudo que estiver pressionado (ao perder o foco: evita tecla "presa" no servidor).
     ReleaseAll,
     /// O painel ganhou o foco: anuncia ao servidor o texto copiado aqui, se mudou.
@@ -152,12 +173,17 @@ pub async fn connect(
     on_frame: Channel<InvokeResponseBody>,
     on_exit: Channel<Option<String>>,
 ) -> Result<(RdpSession, Option<String>), Failure> {
-    let (target_host, secret): &(Host, Secret) = route.last().ok_or_else(|| Failure::other("", "nenhum host para conectar"))?;
+    let (target_host, secret): &(Host, Secret) =
+        route.last().ok_or_else(|| Failure::other("", "nenhum host para conectar"))?;
     let none = ConnectOptions::default();
     let target_opts = opts.get(&target_host.id).unwrap_or(&none);
     let fail = |error| Failure { host_id: target_host.id.clone(), error };
 
-    let password = target_opts.password.clone().or_else(|| secret.password.clone()).ok_or_else(|| fail(ConnectError::NeedPassword))?;
+    let password = target_opts
+        .password
+        .clone()
+        .or_else(|| secret.password.clone())
+        .ok_or_else(|| fail(ConnectError::NeedPassword))?;
     let gateway = match &route[..route.len() - 1] {
         [] => None,
         jumps => Some(Arc::new(ssh::establish(jumps, opts).await?)),
@@ -206,7 +232,10 @@ pub async fn connect(
         })
         .map_err(|e| fail(ConnectError::other(e)))?;
 
-    let cert = opened_rx.await.map_err(|_| fail(ConnectError::other("a sessão RDP terminou inesperadamente")))?.map_err(fail)?;
+    let cert = opened_rx
+        .await
+        .map_err(|_| fail(ConnectError::other("a sessão RDP terminou inesperadamente")))?
+        .map_err(fail)?;
     let new_cert = cert.filter(|fp| trusted_cert.as_deref() != Some(fp.as_str()));
     Ok((RdpSession { commands }, new_cert))
 }
@@ -256,10 +285,13 @@ async fn open(target: &mut Target, size: DesktopSize) -> Result<(ConnectionResul
     let host = &target.host.clone();
     let stream: Box<dyn Stream> = match &target.gateway {
         None => {
-            let socket = tokio::time::timeout(CONNECT_TIMEOUT, tokio::net::TcpStream::connect((host.hostname.as_str(), host.port)))
-                .await
-                .map_err(|_| ConnectError::other(format!("tempo esgotado conectando em {}:{}", host.hostname, host.port)))?
-                .map_err(|e| ConnectError::other(format!("{}:{} — {e}", host.hostname, host.port)))?;
+            let socket = tokio::time::timeout(
+                CONNECT_TIMEOUT,
+                tokio::net::TcpStream::connect((host.hostname.as_str(), host.port)),
+            )
+            .await
+            .map_err(|_| ConnectError::other(format!("tempo esgotado conectando em {}:{}", host.hostname, host.port)))?
+            .map_err(|e| ConnectError::other(format!("{}:{} — {e}", host.hostname, host.port)))?;
             let _ = socket.set_nodelay(true);
             Box::new(socket)
         }
@@ -269,8 +301,15 @@ async fn open(target: &mut Target, size: DesktopSize) -> Result<(ConnectionResul
                 gateway.handle.channel_open_direct_tcpip(host.hostname.clone(), host.port.into(), "127.0.0.1", 0),
             )
             .await
-            .map_err(|_| ConnectError::other(format!("tempo esgotado: o gateway SSH não alcançou {}:{}", host.hostname, host.port)))?
-            .map_err(|e| ConnectError::other(format!("o gateway SSH não alcançou {}:{} — {e}", host.hostname, host.port)))?;
+            .map_err(|_| {
+                ConnectError::other(format!(
+                    "tempo esgotado: o gateway SSH não alcançou {}:{}",
+                    host.hostname, host.port
+                ))
+            })?
+            .map_err(|e| {
+                ConnectError::other(format!("o gateway SSH não alcançou {}:{} — {e}", host.hostname, host.port))
+            })?;
             // O canal do russh não é `Sync` (exigido pelo IronRDP): uma ponte em memória resolve.
             let (near, mut far) = tokio::io::duplex(256 * 1024);
             tauri::async_runtime::spawn(async move {
@@ -287,7 +326,9 @@ async fn open(target: &mut Target, size: DesktopSize) -> Result<(ConnectionResul
     // Canais dinâmicos com factory: o servidor os reabre a cada reativação (o xRDP faz isso ao mudar a
     // resolução) e cada abertura precisa de um processador novo.
     let mut drdynvc = ironrdp_dvc::DrdynvcClient::new()
-        .with_dynamic_channel_factory(ironrdp_displaycontrol::CHANNEL_NAME, || DisplayControlClient::new(|_| Ok(Vec::new())));
+        .with_dynamic_channel_factory(ironrdp_displaycontrol::CHANNEL_NAME, || {
+            DisplayControlClient::new(|_| Ok(Vec::new()))
+        });
     if host.rdp.gfx {
         // Pipeline gráfico (GFX): H.264 e codecs progressivos, bem mais fluido que bitmaps. A sessão
         // compõe os quadros na mesma imagem; sem decodificador H.264, anuncia só o que sabe pintar.
@@ -322,9 +363,8 @@ async fn handshake(
     let mut framed = TokioFramed::new(stream);
     let should_upgrade = ironrdp_tokio::connect_begin(&mut framed, &mut connector).await.map_err(connector_error)?;
     let (stream, leftover) = framed.into_inner();
-    let (tls, cert) = ironrdp_tls::upgrade(stream, &hostname)
-        .await
-        .map_err(|e| ConnectError::other(format!("falha no TLS: {e}")))?;
+    let (tls, cert) =
+        ironrdp_tls::upgrade(stream, &hostname).await.map_err(|e| ConnectError::other(format!("falha no TLS: {e}")))?;
     let fingerprint = check_cert(known, trust, &cert)?;
     let server_public_key = ironrdp_tls::extract_tls_server_public_key(&cert)
         .ok_or_else(|| ConnectError::other("certificado do servidor sem chave pública"))?
@@ -347,7 +387,11 @@ async fn handshake(
 }
 
 /// Confiança no primeiro uso, como o known_hosts do SSH: o xRDP usa certificado autoassinado.
-fn check_cert(known: Option<String>, trust: Option<String>, cert: &x509_cert::Certificate) -> Result<String, ConnectError> {
+fn check_cert(
+    known: Option<String>,
+    trust: Option<String>,
+    cert: &x509_cert::Certificate,
+) -> Result<String, ConnectError> {
     use x509_cert::der::Encode as _;
     let der = cert.to_der().map_err(|e| ConnectError::other(format!("certificado inválido: {e}")))?;
     let fingerprint = Sha256::digest(&der).iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":");
@@ -561,17 +605,24 @@ fn to_operations(events: Vec<Input>, sync: &mut Option<(bool, bool, bool)>) -> V
                 let scancode = Scancode::from_u16(code);
                 ops.push(if down { Operation::KeyPressed(scancode) } else { Operation::KeyReleased(scancode) });
             }
-            Input::Unicode { ch, down } => ops.push(if down { Operation::UnicodeKeyPressed(ch) } else { Operation::UnicodeKeyReleased(ch) }),
+            Input::Unicode { ch, down } => {
+                ops.push(if down { Operation::UnicodeKeyPressed(ch) } else { Operation::UnicodeKeyReleased(ch) })
+            }
             Input::Move { x, y } => ops.push(Operation::MouseMove(MousePosition { x, y })),
             Input::Button { button, down } => {
                 // DOM: 0 esquerdo, 1 meio, 2 direito, 3 voltar, 4 avançar.
-                let Some(button) = [MouseButton::Left, MouseButton::Middle, MouseButton::Right, MouseButton::X1, MouseButton::X2]
-                    .get(usize::from(button))
-                    .copied()
+                let Some(button) =
+                    [MouseButton::Left, MouseButton::Middle, MouseButton::Right, MouseButton::X1, MouseButton::X2]
+                        .get(usize::from(button))
+                        .copied()
                 else {
                     continue;
                 };
-                ops.push(if down { Operation::MouseButtonPressed(button) } else { Operation::MouseButtonReleased(button) });
+                ops.push(if down {
+                    Operation::MouseButtonPressed(button)
+                } else {
+                    Operation::MouseButtonReleased(button)
+                });
             }
             Input::Wheel { delta, vertical } => {
                 ops.push(Operation::WheelRotations(WheelRotations { is_vertical: vertical, rotation_units: delta }))
@@ -862,7 +913,9 @@ mod live {
             Ok(_) => panic!("conectou sem confirmar o certificado"),
         };
         target.trust = Some(fingerprint);
-        let (result, framed) = open(&mut target, DesktopSize { width: 1024, height: 768 }).await.unwrap_or_else(|e| panic!("{}", describe_connect_error(&e)));
+        let (result, framed) = open(&mut target, DesktopSize { width: 1024, height: 768 })
+            .await
+            .unwrap_or_else(|e| panic!("{}", describe_connect_error(&e)));
 
         let messages: Arc<Mutex<Vec<Vec<u8>>>> = Default::default();
         let sink = messages.clone();
@@ -879,9 +932,17 @@ mod live {
         });
 
         let driver = tokio::spawn(async move {
-            let rects = |messages: &Arc<Mutex<Vec<Vec<u8>>>>| messages.lock().unwrap().iter().filter(|m| m[0] == MSG_RECTS).count();
+            let rects = |messages: &Arc<Mutex<Vec<Vec<u8>>>>| {
+                messages.lock().unwrap().iter().filter(|m| m[0] == MSG_RECTS).count()
+            };
             let sizes = |messages: &Arc<Mutex<Vec<Vec<u8>>>>| {
-                messages.lock().unwrap().iter().filter(|m| m[0] == MSG_SIZE).map(|m| (u16::from_le_bytes([m[1], m[2]]), u16::from_le_bytes([m[3], m[4]]))).collect::<Vec<_>>()
+                messages
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|m| m[0] == MSG_SIZE)
+                    .map(|m| (u16::from_le_bytes([m[1], m[2]]), u16::from_le_bytes([m[3], m[4]])))
+                    .collect::<Vec<_>>()
             };
             // Login automático: a área de trabalho (xterm) aparece sem tela de login.
             for _ in 0..100 {
@@ -902,9 +963,17 @@ mod live {
             }
             // Clica no xterm e digita `echo ok` + Enter (scancodes).
             tokio::time::sleep(Duration::from_millis(500)).await;
-            commands.send(Command::Input(vec![Input::Move { x: 300, y: 200 }, Input::Button { button: 0, down: true }, Input::Button { button: 0, down: false }])).unwrap();
+            commands
+                .send(Command::Input(vec![
+                    Input::Move { x: 300, y: 200 },
+                    Input::Button { button: 0, down: true },
+                    Input::Button { button: 0, down: false },
+                ]))
+                .unwrap();
             for code in [0x12u16, 0x2e, 0x23, 0x18, 0x39, 0x18, 0x25, 0x1c] {
-                commands.send(Command::Input(vec![Input::Key { code, down: true }, Input::Key { code, down: false }])).unwrap();
+                commands
+                    .send(Command::Input(vec![Input::Key { code, down: true }, Input::Key { code, down: false }]))
+                    .unwrap();
             }
             tokio::time::sleep(Duration::from_millis(1500)).await;
             let seen = sizes(&messages);
@@ -962,7 +1031,9 @@ mod live {
             Ok(_) => panic!("conectou sem confirmar o certificado"),
         };
         target.trust = Some(fingerprint);
-        let (result, framed) = open(&mut target, DesktopSize { width: 800, height: 600 }).await.unwrap_or_else(|e| panic!("{}", describe_connect_error(&e)));
+        let (result, framed) = open(&mut target, DesktopSize { width: 800, height: 600 })
+            .await
+            .unwrap_or_else(|e| panic!("{}", describe_connect_error(&e)));
 
         let rects = Arc::new(Mutex::new(0usize));
         let count = rects.clone();
@@ -1018,7 +1089,9 @@ mod live {
             _ => panic!("esperava certificado desconhecido"),
         };
         target.trust = Some(fingerprint);
-        let (result, framed) = open(&mut target, DesktopSize { width: 800, height: 600 }).await.unwrap_or_else(|e| panic!("{}", describe_connect_error(&e)));
+        let (result, framed) = open(&mut target, DesktopSize { width: 800, height: 600 })
+            .await
+            .unwrap_or_else(|e| panic!("{}", describe_connect_error(&e)));
         let (commands, command_rx) = mpsc::unbounded_channel();
         let acks = commands.clone();
         let on_frame = Channel::new(move |body| {
@@ -1036,9 +1109,14 @@ mod live {
             arboard::Clipboard::new().unwrap().set_text("nexo-local-123").unwrap();
             commands.send(Command::Input(vec![Input::ClipboardSync])).unwrap();
             tokio::time::sleep(Duration::from_millis(1500)).await;
-            let remote = tokio::task::spawn_blocking(|| in_container("timeout 3 xclip -selection clipboard -o")).await.unwrap();
+            let remote =
+                tokio::task::spawn_blocking(|| in_container("timeout 3 xclip -selection clipboard -o")).await.unwrap();
             // Servidor → local.
-            tokio::task::spawn_blocking(|| in_container("printf nexo-remote-456 | xclip -selection clipboard -loops 2 >/dev/null 2>&1 &")).await.unwrap();
+            tokio::task::spawn_blocking(|| {
+                in_container("printf nexo-remote-456 | xclip -selection clipboard -loops 2 >/dev/null 2>&1 &")
+            })
+            .await
+            .unwrap();
             let mut local = String::new();
             for _ in 0..30 {
                 tokio::time::sleep(Duration::from_millis(200)).await;
