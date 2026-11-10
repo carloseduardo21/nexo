@@ -27,20 +27,20 @@
   },
   "devDependencies": {
     "@internationalized/date": "^3.12.4",
-    "@lucide/svelte": "^1.66.0",
+    "@lucide/svelte": "^1.70.0",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
-    "@tailwindcss/vite": "^4.3.3",
+    "@tailwindcss/vite": "^4.3.5",
     "@tauri-apps/cli": "^2.12.4",
     "@tsconfig/svelte": "^5.0.8",
     "@types/node": "^26.6.6",
-    "bits-ui": "^2.20.2",
-    "shadcn-svelte": "^1.7.2",
+    "bits-ui": "^2.20.6",
+    "shadcn-svelte": "^1.8.0",
     "svelte": "^5.57.3",
-    "svelte-check": "^4.7.7",
-    "svelte-sonner": "^1.2.2",
+    "svelte-check": "^4.7.8",
+    "svelte-sonner": "^1.2.3",
     "tailwind-variants": "^4.0.1",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
-    "vite": "^8.3.5"
+    "vite": "^8.3.6"
   }
 }
