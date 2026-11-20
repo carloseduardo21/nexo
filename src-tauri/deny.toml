@@ -21,13 +21,6 @@ ignore = [
     # Sealed Secrets (não afetado) e, via russh e IronRDP/picky, para assinar localmente na
     # autenticação; o ataque exige medir o tempo de muitas operações de decifra com a chave.
     { id = "RUSTSEC-2023-0071", reason = "sem correção; uso local, ver comentário" },
-    # zip 4.x (extração com symlinks/permissões): vem do tauri-plugin-updater 2.14, que só
-    # extrai pacotes de atualização já conferidos com a nossa chave (minisign). Sai quando o
-    # plugin subir para zip >= 9.
-    { id = "RUSTSEC-2026-0367", reason = "zip do tauri-plugin-updater; pacote assinado" },
-    { id = "RUSTSEC-2026-0368", reason = "zip do tauri-plugin-updater; pacote assinado" },
-    { id = "RUSTSEC-2026-0369", reason = "zip do tauri-plugin-updater; pacote assinado" },
-    { id = "RUSTSEC-2026-0429", reason = "zip do tauri-plugin-updater; pacote assinado" },
     # Sem manutenção e sem substituto, só no Linux: gtk-rs 0.18 (proc-macro-error), usado pelo
     # Tauri, e zbus/zvariant, usados pelo keyring e pelo tauri-plugin-opener.
     { id = "RUSTSEC-2024-0370", reason = "transitiva do gtk-rs 0.18 (Tauri)" },
